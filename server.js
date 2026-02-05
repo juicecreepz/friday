@@ -65,12 +65,11 @@ try {
   process.exit(1);
 }
 
-// Create tables
+// Create tables (base schema - migrations add new columns)
 db.exec(`
   CREATE TABLE IF NOT EXISTS submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     instance_id TEXT UNIQUE NOT NULL,
-    handle TEXT,
     score INTEGER NOT NULL,
     os TEXT,
     arch TEXT,
@@ -79,29 +78,34 @@ db.exec(`
     perm_score INTEGER DEFAULT 0,
     gateway_score INTEGER DEFAULT 0,
     channel_score INTEGER DEFAULT 0,
-    skill_score INTEGER DEFAULT 0,
     ip_address TEXT,
     user_agent TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE INDEX IF NOT EXISTS idx_submissions_score ON submissions(score DESC);
   CREATE INDEX IF NOT EXISTS idx_submissions_timestamp ON submissions(timestamp);
   CREATE INDEX IF NOT EXISTS idx_submissions_instance ON submissions(instance_id);
-  CREATE INDEX IF NOT EXISTS idx_submissions_handle ON submissions(handle);
 `);
 
-// Add handle and skill_score columns if they don't exist (migration for existing DBs)
+// Migrations - add new columns if they don't exist
 try {
   db.exec(`ALTER TABLE submissions ADD COLUMN handle TEXT`);
+  console.log(`[${new Date().toISOString()}] Migration: added handle column`);
 } catch (e) { /* column exists */ }
 try {
   db.exec(`ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0`);
+  console.log(`[${new Date().toISOString()}] Migration: added skill_score column`);
 } catch (e) { /* column exists */ }
 try {
   db.exec(`ALTER TABLE submissions ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  console.log(`[${new Date().toISOString()}] Migration: added updated_at column`);
 } catch (e) { /* column exists */ }
+
+// Create indexes for new columns (after migrations)
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_handle ON submissions(handle)`);
+} catch (e) { /* index exists or column missing */ }
 
 // Prepared statements
 const statements = {
