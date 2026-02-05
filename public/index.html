@@ -19,6 +19,12 @@
             --accent: #00d4aa;
             --accent-glow: rgba(0, 212, 170, 0.15);
             --gold: #f59e0b;
+            --blue: #60a5fa;
+            --blue-glow: rgba(96, 165, 250, 0.16);
+            --bronze: #cd7f32;
+            --bronze-glow: rgba(205, 127, 50, 0.14);
+            --orange: #fb923c;
+            --orange-glow: rgba(251, 146, 60, 0.14);
             --red: #ef4444;
         }
 
@@ -441,18 +447,18 @@
         }
 
         .badge-card.shield {
-            border-color: var(--accent);
-            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), var(--bg-elevated));
+            border-color: var(--blue);
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.10), var(--bg-elevated));
         }
 
         .badge-card.damage {
-            border-color: rgba(245, 158, 11, 0.6);
-            background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), var(--bg-elevated));
+            border-color: var(--bronze);
+            background: linear-gradient(135deg, rgba(205, 127, 50, 0.10), var(--bg-elevated));
         }
 
         .badge-card.breach {
-            border-color: var(--border);
-            background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), var(--bg-elevated));
+            border-color: var(--orange);
+            background: linear-gradient(135deg, rgba(251, 146, 60, 0.10), var(--bg-elevated));
         }
 
         .badge-card.critical {
@@ -476,15 +482,15 @@
         }
 
         .badge-card.shield .badge-name {
-            color: var(--accent);
+            color: var(--blue);
         }
 
         .badge-card.damage .badge-name {
-            color: var(--gold);
+            color: var(--bronze);
         }
 
         .badge-card.breach .badge-name {
-            color: var(--text-secondary);
+            color: var(--orange);
         }
 
         .badge-card.critical .badge-name {
