@@ -89,23 +89,24 @@ db.exec(`
 `);
 
 // Migrations - add new columns if they don't exist
-try {
-  db.exec(`ALTER TABLE submissions ADD COLUMN handle TEXT`);
-  console.log(`[${new Date().toISOString()}] Migration: added handle column`);
-} catch (e) { /* column exists */ }
-try {
-  db.exec(`ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0`);
-  console.log(`[${new Date().toISOString()}] Migration: added skill_score column`);
-} catch (e) { /* column exists */ }
-try {
-  db.exec(`ALTER TABLE submissions ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-  console.log(`[${new Date().toISOString()}] Migration: added updated_at column`);
-} catch (e) { /* column exists */ }
+const migrations = [
+  { col: 'handle', sql: 'ALTER TABLE submissions ADD COLUMN handle TEXT' },
+  { col: 'skill_score', sql: 'ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0' }
+];
+
+for (const m of migrations) {
+  try {
+    db.exec(m.sql);
+    console.log(`[${new Date().toISOString()}] Migration: added ${m.col} column`);
+  } catch (e) { 
+    // Column already exists - that's fine
+  }
+}
 
 // Create indexes for new columns (after migrations)
 try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_handle ON submissions(handle)`);
-} catch (e) { /* index exists or column missing */ }
+} catch (e) { /* index exists */ }
 
 // Prepared statements
 const statements = {
@@ -118,14 +119,14 @@ const statements = {
     UPDATE submissions 
     SET instance_id = ?, score = ?, os = ?, arch = ?, timestamp = ?, 
         network_score = ?, perm_score = ?, gateway_score = ?, channel_score = ?, skill_score = ?,
-        ip_address = ?, user_agent = ?, updated_at = CURRENT_TIMESTAMP
+        ip_address = ?, user_agent = ?
     WHERE handle = ?
   `),
   updateByInstance: db.prepare(`
     UPDATE submissions 
     SET handle = ?, score = ?, os = ?, arch = ?, timestamp = ?, 
         network_score = ?, perm_score = ?, gateway_score = ?, channel_score = ?, skill_score = ?,
-        ip_address = ?, user_agent = ?, updated_at = CURRENT_TIMESTAMP
+        ip_address = ?, user_agent = ?
     WHERE instance_id = ?
   `),
   getByHandle: db.prepare('SELECT * FROM submissions WHERE handle = ?'),
