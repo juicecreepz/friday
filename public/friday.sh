@@ -782,6 +782,9 @@ print_results() {
     elif [ $TOTAL_SCORE -ge 50 ]; then
         badge="⚠ SUIT DAMAGE DETECTED"
         badge_color=$GOLD
+    elif [ $TOTAL_SCORE -ge 30 ]; then
+        badge="⚠ ARMOR BREACH DETECTED"
+        badge_color=$GRAY
     else
         badge="🚨 CRITICAL: JARVIS COMPROMISED"
         badge_color=$RED

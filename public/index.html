@@ -445,6 +445,21 @@
             background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), var(--bg-elevated));
         }
 
+        .badge-card.damage {
+            border-color: rgba(245, 158, 11, 0.6);
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), var(--bg-elevated));
+        }
+
+        .badge-card.breach {
+            border-color: var(--border);
+            background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), var(--bg-elevated));
+        }
+
+        .badge-card.critical {
+            border-color: var(--red);
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.10), var(--bg-elevated));
+        }
+
         .badge-icon {
             font-size: 2rem;
             margin-bottom: 0.75rem;
@@ -462,6 +477,18 @@
 
         .badge-card.shield .badge-name {
             color: var(--accent);
+        }
+
+        .badge-card.damage .badge-name {
+            color: var(--gold);
+        }
+
+        .badge-card.breach .badge-name {
+            color: var(--text-secondary);
+        }
+
+        .badge-card.critical .badge-name {
+            color: var(--red);
         }
 
         .badge-range {
@@ -1005,12 +1032,27 @@
             <div class="badge-card stark">
                 <div class="badge-icon">★</div>
                 <div class="badge-name">Stark Certified</div>
-                <div class="badge-range">90-100 points</div>
+                <div class="badge-range">90-120 points</div>
             </div>
             <div class="badge-card shield">
                 <div class="badge-icon">◆</div>
-                <div class="badge-name">Shield Protocol</div>
+                <div class="badge-name">Shield Protocol Active</div>
                 <div class="badge-range">70-89 points</div>
+            </div>
+            <div class="badge-card damage">
+                <div class="badge-icon">⚠</div>
+                <div class="badge-name">Suit Damage Detected</div>
+                <div class="badge-range">50-69 points</div>
+            </div>
+            <div class="badge-card breach">
+                <div class="badge-icon">⚠</div>
+                <div class="badge-name">Armor Breach Detected</div>
+                <div class="badge-range">30-49 points</div>
+            </div>
+            <div class="badge-card critical">
+                <div class="badge-icon">🚨</div>
+                <div class="badge-name">Critical: JARVIS Compromised</div>
+                <div class="badge-range">0-29 points</div>
             </div>
         </div>
     </section>
