@@ -91,7 +91,8 @@ db.exec(`
 // Migrations - add new columns if they don't exist
 const migrations = [
   { col: 'handle', sql: 'ALTER TABLE submissions ADD COLUMN handle TEXT' },
-  { col: 'skill_score', sql: 'ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0' }
+  { col: 'skill_score', sql: 'ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0' },
+  { col: 'pin_hash', sql: 'ALTER TABLE submissions ADD COLUMN pin_hash TEXT' }
 ];
 
 for (const m of migrations) {
@@ -108,12 +109,18 @@ try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_handle ON submissions(handle)`);
 } catch (e) { /* index exists */ }
 
+// Simple hash function for PIN (not cryptographically secure, but fine for this use case)
+function hashPin(pin) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(pin.toString()).digest('hex');
+}
+
 // Prepared statements
 const statements = {
   insertSubmission: db.prepare(`
     INSERT INTO submissions 
-    (instance_id, handle, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score, ip_address, user_agent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (instance_id, handle, pin_hash, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateByHandle: db.prepare(`
     UPDATE submissions 
@@ -122,14 +129,7 @@ const statements = {
         ip_address = ?, user_agent = ?
     WHERE handle = ?
   `),
-  updateByInstance: db.prepare(`
-    UPDATE submissions 
-    SET handle = ?, score = ?, os = ?, arch = ?, timestamp = ?, 
-        network_score = ?, perm_score = ?, gateway_score = ?, channel_score = ?, skill_score = ?,
-        ip_address = ?, user_agent = ?
-    WHERE instance_id = ?
-  `),
-  getByHandle: db.prepare('SELECT * FROM submissions WHERE handle = ?'),
+  getByHandle: db.prepare('SELECT * FROM submissions WHERE handle = ? COLLATE NOCASE'),
   getRank: db.prepare(`
     SELECT COUNT(*) + 1 as rank FROM submissions WHERE score > ?
   `),
@@ -320,15 +320,15 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
     });
   }
 
-  const { instance_id, handle, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score } = req.body;
+  const { instance_id, handle, pin, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score } = req.body;
 
   // Validation
   if (!instance_id || typeof score !== 'number') {
     return res.status(400).json({ error: 'Missing required fields: instance_id, score' });
   }
 
-  if (score < 0 || score > 100) {
-    return res.status(400).json({ error: 'Score must be between 0 and 100' });
+  if (score < 0 || score > 120) {
+    return res.status(400).json({ error: 'Score must be between 0 and 120' });
   }
 
   // Validate instance_id format (allow friday-XXXXX)
@@ -336,74 +336,45 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
     return res.status(400).json({ error: 'Invalid instance_id format' });
   }
 
-  // Clean handle (remove @ if present)
-  const cleanHandle = handle ? handle.replace(/^@/, '').trim() : null;
+  // Clean handle (remove @ if present, lowercase for consistency)
+  const cleanHandle = handle ? handle.replace(/^@/, '').trim().toLowerCase() : null;
+
+  // Handle is required for leaderboard
+  if (!cleanHandle) {
+    return res.status(400).json({ error: 'Handle is required for leaderboard submission' });
+  }
+
+  // Validate handle format (alphanumeric, underscores, 3-20 chars)
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(cleanHandle)) {
+    return res.status(400).json({ error: 'Handle must be 3-20 characters (letters, numbers, underscores only)' });
+  }
 
   try {
-    // Check for recent submissions from same IP (rate limiting)
-    const recentSubmissions = statements.getRecent.all(req.ip);
-    if (recentSubmissions.length >= config.leaderboardRateLimit) {
-      return res.status(429).json({ 
-        error: 'Rate limit exceeded',
-        retryAfter: 3600
-      });
-    }
-
-    let isUpdate = false;
-
-    // Check if handle already exists - if so, update instead of insert
-    if (cleanHandle) {
-      const existingByHandle = statements.getByHandle.get(cleanHandle);
-      if (existingByHandle) {
-        // Update existing entry by handle
-        statements.updateByHandle.run(
-          instance_id,
-          score,
-          os || 'unknown',
-          arch || 'unknown',
-          timestamp || new Date().toISOString(),
-          network_score || 0,
-          perm_score || 0,
-          gateway_score || 0,
-          channel_score || 0,
-          skill_score || 0,
-          req.ip,
-          req.headers['user-agent'],
-          cleanHandle
-        );
-        isUpdate = true;
+    // Check if handle already exists
+    const existingByHandle = statements.getByHandle.get(cleanHandle);
+    
+    if (existingByHandle) {
+      // Handle exists - need to verify PIN
+      if (!pin) {
+        return res.status(409).json({ 
+          error: 'handle_taken',
+          message: 'This handle is already claimed. Enter your PIN to update your score.',
+          needsPin: true
+        });
       }
-    }
-
-    // Check if instance_id already exists
-    if (!isUpdate) {
-      const existingByInstance = statements.getByInstance.get(instance_id);
-      if (existingByInstance) {
-        // Update existing entry by instance_id
-        statements.updateByInstance.run(
-          cleanHandle,
-          score,
-          os || 'unknown',
-          arch || 'unknown',
-          timestamp || new Date().toISOString(),
-          network_score || 0,
-          perm_score || 0,
-          gateway_score || 0,
-          channel_score || 0,
-          skill_score || 0,
-          req.ip,
-          req.headers['user-agent'],
-          instance_id
-        );
-        isUpdate = true;
+      
+      // Verify PIN
+      const pinHash = hashPin(pin);
+      if (existingByHandle.pin_hash !== pinHash) {
+        return res.status(403).json({ 
+          error: 'invalid_pin',
+          message: 'Incorrect PIN. If this is not your handle, please choose a different one.'
+        });
       }
-    }
-
-    // New submission
-    if (!isUpdate) {
-      statements.insertSubmission.run(
+      
+      // PIN verified - update the entry
+      statements.updateByHandle.run(
         instance_id,
-        cleanHandle,
         score,
         os || 'unknown',
         arch || 'unknown',
@@ -414,9 +385,61 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
         channel_score || 0,
         skill_score || 0,
         req.ip,
-        req.headers['user-agent']
+        req.headers['user-agent'],
+        cleanHandle
       );
+      
+      // Get rank
+      const { rank } = statements.getRank.get(score);
+      const { count: total } = statements.getTotal.get();
+      const percentile = Math.round((rank / total) * 100);
+
+      return res.json({
+        success: true,
+        updated: true,
+        rank,
+        total_participants: total,
+        percentile,
+        handle: cleanHandle,
+        message: 'Score updated successfully!'
+      });
     }
+    
+    // New handle - PIN is required to claim it
+    if (!pin) {
+      return res.status(400).json({ 
+        error: 'pin_required',
+        message: 'Create a 4-digit PIN to protect your handle.',
+        needsNewPin: true
+      });
+    }
+    
+    // Validate PIN format (4 digits)
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ 
+        error: 'invalid_pin_format',
+        message: 'PIN must be exactly 4 digits.'
+      });
+    }
+    
+    // Create new entry with handle and PIN
+    const pinHash = hashPin(pin);
+    statements.insertSubmission.run(
+      instance_id,
+      cleanHandle,
+      pinHash,
+      score,
+      os || 'unknown',
+      arch || 'unknown',
+      timestamp || new Date().toISOString(),
+      network_score || 0,
+      perm_score || 0,
+      gateway_score || 0,
+      channel_score || 0,
+      skill_score || 0,
+      req.ip,
+      req.headers['user-agent']
+    );
 
     // Get rank
     const { rank } = statements.getRank.get(score);
@@ -425,12 +448,12 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
 
     res.json({
       success: true,
-      updated: isUpdate,
+      updated: false,
       rank,
       total_participants: total,
       percentile,
-      instance_id,
-      handle: cleanHandle
+      handle: cleanHandle,
+      message: `Handle @${cleanHandle} claimed! Remember your PIN to update your score later.`
     });
   } catch (error) {
     console.error('Submission error:', error);

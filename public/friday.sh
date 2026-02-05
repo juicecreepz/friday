@@ -567,7 +567,7 @@ print_issues() {
         if [[ "$rescan_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             speak "Re-analyzing security posture..."
             calculate_scores
-            echo -e "   ${WHITE}Updated score: ${GOLD}$TOTAL_SCORE/100${NC}"
+            echo -e "   ${WHITE}Updated score: ${GOLD}$TOTAL_SCORE/120${NC}"
             echo
         fi
     fi
@@ -618,7 +618,7 @@ print_results() {
     echo -e "   ${GRAY}║${NC}    ${WHITE}SECURITY SCORE${NC}                     ${GRAY}║${NC}"
     echo -e "   ${GRAY}║${NC}                                       ${GRAY}║${NC}"
     echo -e "   ${GRAY}║${NC}         ${BLUE}$TOTAL_SCORE${NC}                            ${GRAY}║${NC}"
-    echo -e "   ${GRAY}║${NC}        ${GRAY}/100${NC}                          ${GRAY}║${NC}"
+    echo -e "   ${GRAY}║${NC}        ${GRAY}/120${NC}                          ${GRAY}║${NC}"
     echo -e "   ${GRAY}║${NC}                                       ${GRAY}║${NC}"
     echo -e "   ${GRAY}║${NC}    ${badge_color}$badge${NC}  ${GRAY}║${NC}"
     echo -e "   ${GRAY}║${NC}                                       ${GRAY}║${NC}"
@@ -691,7 +691,7 @@ print_results() {
     
     # Links
     echo -e "${BLUE}🔗 Dashboard:${NC} https://friday-boi.pages.dev/#leaderboard"
-    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAY"
+    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F120%20%23FRIDAY"
     echo
 }
 
@@ -701,22 +701,35 @@ submit_leaderboard() {
     local os=$(uname -s)
     local arch=$(uname -m)
     
-    speak "Connecting to Stark Industries global network..."
+    speak "Let's get you on the leaderboard..."
+    echo
     
-    # Prompt for optional handle
-    echo -ne "${BLUE}Enter your @Twitter handle for the leaderboard (optional): ${NC}"
-    read -r user_handle < /dev/tty
+    # Prompt for handle (required)
+    while true; do
+        echo -ne "${BLUE}Choose your @handle (3-20 chars, letters/numbers/underscore): ${NC}"
+        read -r user_handle < /dev/tty
+        
+        # Clean handle
+        user_handle=$(echo "$user_handle" | sed 's/^@//' | tr '[:upper:]' '[:lower:]')
+        
+        if [ -z "$user_handle" ]; then
+            echo -e "${RED}Handle is required for leaderboard.${NC}"
+            continue
+        fi
+        
+        if ! echo "$user_handle" | grep -qE '^[a-zA-Z0-9_]{3,20}$'; then
+            echo -e "${RED}Invalid format. Use 3-20 characters (letters, numbers, underscore).${NC}"
+            continue
+        fi
+        
+        break
+    done
     
-    # Prepare submission data
-    local handle_param=""
-    if [ -n "$user_handle" ]; then
-        handle_param="\"handle\": \"$user_handle\","
-    fi
-    
+    # First attempt without PIN to check if handle exists
     local json_data=$(cat <<EOF
 {
   "instance_id": "$INSTANCE_ID",
-  $handle_param
+  "handle": "$user_handle",
   "score": $score,
   "os": "$os",
   "arch": "$arch",
@@ -730,37 +743,130 @@ submit_leaderboard() {
 EOF
 )
     
-    # Submit to API (placeholder - replace with actual endpoint)
     local response=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -d "$json_data" \
-        "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null || echo '{"error": "connection_failed"}')
+        "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
     
-    # Parse response (simple grep/sed for now)
+    # Check if handle is taken (needs PIN)
+    if echo "$response" | grep -q '"needsPin":true'; then
+        echo
+        echo -e "${GOLD}Handle @$user_handle is already claimed.${NC}"
+        echo -ne "${BLUE}Enter your 4-digit PIN to update your score (or 'new' for different handle): ${NC}"
+        read -r user_pin < /dev/tty
+        
+        if [ "$user_pin" = "new" ] || [ "$user_pin" = "NEW" ]; then
+            submit_leaderboard "$score"
+            return
+        fi
+        
+        # Retry with PIN
+        json_data=$(cat <<EOF
+{
+  "instance_id": "$INSTANCE_ID",
+  "handle": "$user_handle",
+  "pin": "$user_pin",
+  "score": $score,
+  "os": "$os",
+  "arch": "$arch",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "network_score": $NETWORK_SCORE,
+  "perm_score": $PERM_SCORE,
+  "gateway_score": $GATEWAY_SCORE,
+  "channel_score": $CHANNEL_SCORE,
+  "skill_score": $SKILL_SCORE
+}
+EOF
+)
+        response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "$json_data" \
+            "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
+        
+        # Check for wrong PIN
+        if echo "$response" | grep -q '"error":"invalid_pin"'; then
+            echo -e "${RED}Incorrect PIN. Try again or choose a different handle.${NC}"
+            submit_leaderboard "$score"
+            return
+        fi
+    fi
+    
+    # Check if new handle needs PIN
+    if echo "$response" | grep -q '"needsNewPin":true'; then
+        echo
+        echo -e "${GREEN}Handle @$user_handle is available!${NC}"
+        while true; do
+            echo -ne "${BLUE}Create a 4-digit PIN to protect your handle: ${NC}"
+            read -r user_pin < /dev/tty
+            
+            if ! echo "$user_pin" | grep -qE '^[0-9]{4}$'; then
+                echo -e "${RED}PIN must be exactly 4 digits.${NC}"
+                continue
+            fi
+            break
+        done
+        
+        # Retry with new PIN
+        json_data=$(cat <<EOF
+{
+  "instance_id": "$INSTANCE_ID",
+  "handle": "$user_handle",
+  "pin": "$user_pin",
+  "score": $score,
+  "os": "$os",
+  "arch": "$arch",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "network_score": $NETWORK_SCORE,
+  "perm_score": $PERM_SCORE,
+  "gateway_score": $GATEWAY_SCORE,
+  "channel_score": $CHANNEL_SCORE,
+  "skill_score": $SKILL_SCORE
+}
+EOF
+)
+        response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "$json_data" \
+            "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
+    fi
+    
+    # Check for errors
+    if echo "$response" | grep -q '"error"'; then
+        local error_msg=$(echo "$response" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+        echo -e "${RED}Error: ${error_msg:-Failed to submit}${NC}"
+        return 1
+    fi
+    
+    # Parse success response
     local rank=$(echo "$response" | grep -o '"rank":[0-9]*' | cut -d':' -f2 || echo "--")
     local total=$(echo "$response" | grep -o '"total_participants":[0-9]*' | cut -d':' -f2 || echo "--")
     local percentile=$(echo "$response" | grep -o '"percentile":[0-9]*' | cut -d':' -f2 || echo "--")
+    local message=$(echo "$response" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
     
     echo
     section
     echo
     echo -e "${GOLD}🏆 GLOBAL LEADERBOARD${NC}"
     echo
+    if [ -n "$message" ]; then
+        echo -e "   ${GREEN}$message${NC}"
+        echo
+    fi
+    echo -e "   Handle: ${WHITE}@$user_handle${NC}"
     echo -e "   Your rank: ${WHITE}#$rank${NC} of $total"
     echo -e "   Percentile: Top ${GOLD}$percentile%${NC}"
     echo
     
-    # Achievement badges for leaderboard
+    # Achievement badges
     if [ "$rank" -le 10 ] 2>/dev/null; then
         echo -e "   ${GOLD}★ TOP 10 FRIDAY PROTECTOR ★${NC}"
     elif [ "$rank" -le 100 ] 2>/dev/null; then
         echo -e "   ${BLUE}◆ ELITE SECURITY OPERATIVE ◆${NC}"
-    elif [ "$percentile" -le 10 ] 2>/dev/null; then
-        echo -e "   ${GREEN}⚔ SHIELD AGENT ⚔${NC}"
     fi
     
     echo
-    echo -e "${BLUE}🐦${NC} Share your rank: https://twitter.com/intent/tweet?text=My%20OpenClaw%20scored%20$score%2F100%20on%20FRIDAY!%20Rank%20%23$rank%20globally%20%23FRIDAY"
+    echo -e "${BLUE}🔗 Leaderboard:${NC} https://friday-boi.pages.dev/#leaderboard"
+    echo -e "${BLUE}🐦 Share:${NC} https://twitter.com/intent/tweet?text=I%20scored%20$score%2F120%20on%20FRIDAY%20security!%20Rank%20%23$rank%20%40$user_handle%20%23FRIDAY"
     echo
 }
 
@@ -775,8 +881,8 @@ offer_tailscale_upgrade() {
         echo
         echo -e "${GOLD}⚡ SUIT UPGRADE AVAILABLE${NC}"
         echo
-        echo -e "   Current armor rating: ${WHITE}$TOTAL_SCORE/100${NC}"
-        echo -e "   Combat-ready with upgrade: ${GOLD}$boosted_score/100 ★ STARK CERTIFIED ★${NC}"
+        echo -e "   Current armor rating: ${WHITE}$TOTAL_SCORE/120${NC}"
+        echo -e "   Combat-ready with upgrade: ${GOLD}$boosted_score/120 ★ STARK CERTIFIED ★${NC}"
         echo
         echo -e "   ${GRAY}Install Tailscale mesh VPN for:${NC}"
         echo -e "   • Zero-config private network"
@@ -857,7 +963,7 @@ main() {
     wait $calc_pid
     
     local initial_score=$TOTAL_SCORE
-    echo -e "   Initial score: ${GOLD}$initial_score/100${NC}"
+    echo -e "   Initial score: ${GOLD}$initial_score/120${NC}"
     echo
     
     # Auto-fix phase
