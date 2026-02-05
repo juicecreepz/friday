@@ -20,7 +20,7 @@ curl -sSL friday.openclaw.dev | bash
 ## ✨ Features
 
 - **One-Command Audit** - No dependencies, no sign-up required
-- **Malicious Skill Detection** - Checks against Clawdex database (detected 341 malicious skills in the ClawHavoc attack)
+- **Malicious Skill Detection** - Real-time checks against Clawdex database for malicious and unknown skills
 - **Armor Rating** - 5 vectors: Network, Permissions, Gateway, Channels, Skills
 - **Auto-Fix** - Automatically hardens firewall, permissions, and gateway binding
 - **Tailscale Integration** - Optional upgrade for private mesh networking
