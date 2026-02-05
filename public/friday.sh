@@ -5,7 +5,8 @@
 #
 # One-command security hardening for OpenClaw
 
-set -e
+# Don't use set -e for piped execution - handle errors manually
+# set -e
 
 # Colors
 BLACK='\033[0;30m'
@@ -30,6 +31,7 @@ MALICIOUS_SKILLS=()
 UNKNOWN_SKILLS=()
 
 # Issue tracking for detailed breakdown
+# Format: "id|points|description|fix_command|needs_sudo"
 NETWORK_ISSUES=()
 PERM_ISSUES=()
 GATEWAY_ISSUES=()
@@ -78,6 +80,37 @@ section() {
     echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
+# Safe read function that works with piped input
+# Always tries /dev/tty first for true interactivity
+safe_read() {
+    local var_name="$1"
+    local prompt="$2"
+    
+    # Always try /dev/tty first for true interactivity
+    if [ -w /dev/tty ]; then
+        if [ -n "$prompt" ]; then
+            printf "%s" "$prompt" > /dev/tty
+        fi
+        IFS= read -r "$var_name" < /dev/tty
+        return 0
+    fi
+    
+    # Fallback to stdin if /dev/tty not available
+    if [ -t 0 ]; then
+        if [ -n "$prompt" ]; then
+            printf "%s" "$prompt"
+        fi
+        IFS= read -r "$var_name"
+        return 0
+    fi
+    
+    # Last resort: use stdin with timeout (for piped input)
+    if [ -n "$prompt" ]; then
+        printf "%s" "$prompt"
+    fi
+    IFS= read -r -t 5 "$var_name" || eval "$var_name=''"
+}
+
 # Install Tailscale
 install_tailscale() {
     speak "Initiating armor upgrade sequence..."
@@ -97,7 +130,7 @@ install_tailscale() {
     
     # Reconfigure firewall for Tailscale-only
     if command -v ufw &> /dev/null; then
-        sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null
+        sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null || true
     fi
 }
 
@@ -287,12 +320,12 @@ fix_firewall() {
     
     if command -v ufw &> /dev/null; then
         # Reset and configure UFW
-        sudo ufw --force reset &> /dev/null
-        sudo ufw default deny incoming &> /dev/null
-        sudo ufw default allow outgoing &> /dev/null
+        sudo ufw --force reset &> /dev/null || true
+        sudo ufw default deny incoming &> /dev/null || true
+        sudo ufw default allow outgoing &> /dev/null || true
         
         # Allow Tailscale only
-        sudo ufw allow 41641/udp &> /dev/null  # Tailscale
+        sudo ufw allow 41641/udp &> /dev/null || true  # Tailscale
         
         # Block SSH if exposed
         local ssh_status=$(check_ssh_exposure)
@@ -301,7 +334,7 @@ fix_firewall() {
             echo -e "${GOLD}[!] SSH exposure detected - recommend Tailscale SSH${NC}"
         fi
         
-        sudo ufw --force enable &> /dev/null
+        sudo ufw --force enable &> /dev/null || true
         echo -e "${GREEN}✓${NC} Firewall configured"
     fi
 }
@@ -313,8 +346,8 @@ fix_permissions() {
         chmod 700 "$HOME/.openclaw"
         
         # Secure all config files
-        find "$HOME/.openclaw" -name "*.json" -exec chmod 600 {} \; 2>/dev/null
-        find "$HOME/.openclaw" -name "*.key" -exec chmod 600 {} \; 2>/dev/null
+        find "$HOME/.openclaw" -name "*.json" -exec chmod 600 {} \; 2>/dev/null || true
+        find "$HOME/.openclaw" -name "*.key" -exec chmod 600 {} \; 2>/dev/null || true
         
         echo -e "${GREEN}✓${NC} Permissions locked"
     fi
@@ -330,13 +363,14 @@ fix_gateway_binding() {
         # Update bind address to localhost if exposed
         if grep -q '"bind": *"0.0.0.0"' "$HOME/.openclaw/config.json" 2>/dev/null; then
             sed -i 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null || \
-            sed -i '' 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null
+            sed -i '' 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null || true
             echo -e "${GREEN}✓${NC} Gateway bound to localhost"
         fi
     fi
 }
 
 # Calculate scores with issue tracking
+# Using pipe (|) as delimiter instead of colon (:) since commands contain colons
 calculate_scores() {
     # Reset issues
     NETWORK_ISSUES=()
@@ -355,21 +389,21 @@ calculate_scores() {
         NETWORK_SCORE=$((NETWORK_SCORE + 15))
     elif [ "$tailscale" = "installed" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 8))
-        NETWORK_ISSUES+=("tailscale_inactive:-7:Tailscale installed but not connected:Run 'sudo tailscale up' to connect")
+        NETWORK_ISSUES+=("tailscale_inactive|-7|Tailscale installed but not connected|tailscale up|true")
     else
-        NETWORK_ISSUES+=("tailscale_missing:-15:Tailscale not installed:Run 'curl -fsSL https://tailscale.com/install.sh | sh'")
+        NETWORK_ISSUES+=("tailscale_missing|-15|Tailscale not installed|curl -fsSL https://tailscale.com/install.sh | sh|false")
     fi
     
     if [ "$firewall" = "active" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 10))
     else
-        NETWORK_ISSUES+=("firewall_inactive:-10:Firewall not active:Run 'sudo ufw enable' (Linux) or enable in System Preferences (macOS)")
+        NETWORK_ISSUES+=("firewall_inactive|-10|Firewall not active|ufw enable|true")
     fi
     
     if [ "$ssh" = "local-only" ] || [ "$ssh" = "disabled" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 5))
     elif [ "$ssh" = "exposed" ]; then
-        NETWORK_ISSUES+=("ssh_exposed:-5:SSH exposed to internet:Add 'ListenAddress 127.0.0.1' to /etc/ssh/sshd_config or use Tailscale SSH")
+        NETWORK_ISSUES+=("ssh_exposed|-5|SSH exposed to internet|echo 'ListenAddress 127.0.0.1' >> /etc/ssh/sshd_config && systemctl restart sshd|true")
     fi
     
     # Permissions (25 points)
@@ -378,7 +412,7 @@ calculate_scores() {
         local perms=$(stat -c "%a" "$HOME/.openclaw" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw" 2>/dev/null)
         if [ "$perms" != "700" ]; then
             PERM_SCORE=$((PERM_SCORE - 5))
-            PERM_ISSUES+=("dir_perms:-5:~/.openclaw has loose permissions ($perms):Run 'chmod 700 ~/.openclaw'")
+            PERM_ISSUES+=("dir_perms|-5|~/.openclaw has loose permissions ($perms)|chmod 700 ~/.openclaw|false")
         fi
     fi
     
@@ -386,7 +420,7 @@ calculate_scores() {
         local config_perms=$(stat -c "%a" "$HOME/.openclaw/config.json" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw/config.json" 2>/dev/null)
         if [ "$config_perms" != "600" ]; then
             PERM_SCORE=$((PERM_SCORE - 5))
-            PERM_ISSUES+=("config_perms:-5:config.json has loose permissions ($config_perms):Run 'chmod 600 ~/.openclaw/config.json'")
+            PERM_ISSUES+=("config_perms|-5|config.json has loose permissions ($config_perms)|chmod 600 ~/.openclaw/config.json|false")
         fi
     fi
     
@@ -397,15 +431,15 @@ calculate_scores() {
     GATEWAY_SCORE=25
     if [ "$gateway" = "exposed" ]; then
         GATEWAY_SCORE=10
-        GATEWAY_ISSUES+=("gateway_exposed:-15:Gateway bound to 0.0.0.0 (public):Change bind to '127.0.0.1' in config.json")
+        GATEWAY_ISSUES+=("gateway_exposed|-15|Gateway bound to 0.0.0.0 (public)|Use text editor to change bind to 127.0.0.1 in ~/.openclaw/config.json|false")
     elif [ "$gateway" = "unknown" ]; then
         GATEWAY_SCORE=15
-        GATEWAY_ISSUES+=("gateway_unknown:-10:Could not verify gateway binding:Check gateway.bind in config.json is '127.0.0.1'")
+        GATEWAY_ISSUES+=("gateway_unknown|-10|Could not verify gateway binding|Check gateway.bind in config.json is set to 127.0.0.1|false")
     fi
     
     if [ "$token_issues" -gt 0 ]; then
         GATEWAY_SCORE=$((GATEWAY_SCORE - 10))
-        GATEWAY_ISSUES+=("weak_token:-10:Auth token is too short (<32 chars):Generate a longer token with 'openssl rand -hex 32'")
+        GATEWAY_ISSUES+=("weak_token|-10|Auth token is too short (<32 chars)|openssl rand -hex 32|false")
     fi
     
     # Channels (20 points)
@@ -413,12 +447,12 @@ calculate_scores() {
     if [ -f "$HOME/.openclaw/config.json" ]; then
         if grep -q '"groupPolicy": *"open"' "$HOME/.openclaw/config.json" 2>/dev/null; then
             CHANNEL_SCORE=$((CHANNEL_SCORE - 10))
-            CHANNEL_ISSUES+=("open_groups:-10:Group policy is 'open' (anyone can message):Set groupPolicy to 'allowlist' in config.json")
+            CHANNEL_ISSUES+=("open_groups|-10|Group policy is 'open' (anyone can message)|Change groupPolicy to 'allowlist' in ~/.openclaw/config.json|false")
         fi
         
         if ! grep -q '"allowlist"' "$HOME/.openclaw/config.json" 2>/dev/null; then
             CHANNEL_SCORE=$((CHANNEL_SCORE - 5))
-            CHANNEL_ISSUES+=("no_allowlist:-5:No allowlist configured:Add allowlist array to channel config")
+            CHANNEL_ISSUES+=("no_allowlist|-5|No allowlist configured|Add allowlist array to ~/.openclaw/config.json channel config|false")
         fi
     fi
     
@@ -428,16 +462,54 @@ calculate_scores() {
     # Add skill issues from check
     if [ ${#MALICIOUS_SKILLS[@]} -gt 0 ]; then
         for skill in "${MALICIOUS_SKILLS[@]}"; do
-            SKILL_ISSUES+=("malicious_$skill:-50:Malicious skill detected: $skill:Run 'npm uninstall -g $skill' IMMEDIATELY")
+            SKILL_ISSUES+=("malicious_$skill|-50|Malicious skill detected: $skill|npm uninstall -g $skill|false")
         done
     fi
     if [ ${#UNKNOWN_SKILLS[@]} -gt 0 ]; then
         for skill in "${UNKNOWN_SKILLS[@]}"; do
-            SKILL_ISSUES+=("unknown_$skill:-5:Unverified skill: $skill:Check https://clawdex.koi.security or remove if untrusted")
+            SKILL_ISSUES+=("unknown_$skill|-5|Unverified skill: $skill|Check https://clawdex.koi.security or remove if untrusted|false")
         done
     fi
     
     TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE + SKILL_SCORE))
+}
+
+# Execute a fix command safely
+execute_fix() {
+    local cmd="$1"
+    local needs_sudo="$2"
+    local exit_code=0
+    
+    # Handle multi-part commands (&& or ; separated)
+    if [ "$needs_sudo" = "true" ]; then
+        # For sudo commands, run entire command block with sudo bash
+        echo -e "         ${GRAY}Running with sudo...${NC}"
+        # Use bash -c to handle complex commands properly
+        if sudo bash -c "$cmd" 2>/tmp/friday_error.log; then
+            echo -e "         ${GREEN}✓ Done${NC}"
+            return 0
+        else
+            exit_code=$?
+            echo -e "         ${RED}✗ Failed (exit $exit_code)${NC}"
+            if [ -f /tmp/friday_error.log ] && [ -s /tmp/friday_error.log ]; then
+                echo -e "         ${GRAY}Error: $(head -1 /tmp/friday_error.log)${NC}"
+            fi
+            return 1
+        fi
+    else
+        # No sudo needed
+        if bash -c "$cmd" 2>/tmp/friday_error.log; then
+            echo -e "         ${GREEN}✓ Done${NC}"
+            return 0
+        else
+            exit_code=$?
+            echo -e "         ${RED}✗ Failed (exit $exit_code)${NC}"
+            if [ -f /tmp/friday_error.log ] && [ -s /tmp/friday_error.log ]; then
+                echo -e "         ${GRAY}Error: $(head -1 /tmp/friday_error.log)${NC}"
+            fi
+            return 1
+        fi
+    fi
 }
 
 # Offer to run a fix command
@@ -445,22 +517,17 @@ offer_fix() {
     local desc="$1"
     local fix_cmd="$2"
     local points="$3"
-    
-    # Check if command likely needs sudo
-    local needs_sudo=false
-    if [[ "$fix_cmd" == *"ufw"* ]] || [[ "$fix_cmd" == *"/etc/"* ]] || [[ "$fix_cmd" == *"tailscale"* ]]; then
-        needs_sudo=true
-    fi
+    local needs_sudo="$4"
+    local fix_response=""
     
     echo -e "   ${RED}$points${NC}  $desc"
-    if [ "$needs_sudo" = true ]; then
+    if [ "$needs_sudo" = "true" ]; then
         echo -e "         ${GRAY}Command:${NC} sudo $fix_cmd"
-        echo -ne "         ${BLUE}Run with sudo? [Y/n/skip all]: ${NC}"
+        safe_read fix_response "         ${BLUE}Run with sudo? [Y/n/skip all]: ${NC}"
     else
         echo -e "         ${GRAY}Command:${NC} $fix_cmd"
-        echo -ne "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
+        safe_read fix_response "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
     fi
-    read -r fix_response < /dev/tty
     
     case "$fix_response" in
         [Ss]|[Ss]kip*)
@@ -473,12 +540,8 @@ offer_fix() {
             ;;
         *)
             echo -e "         ${GOLD}Running...${NC}"
-            if [ "$needs_sudo" = true ]; then
-                sudo sh -c "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed${NC}"
-            else
-                eval "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed${NC}"
-            fi
-            return 0
+            execute_fix "$fix_cmd" "$needs_sudo"
+            return $?
             ;;
     esac
 }
@@ -533,9 +596,11 @@ print_issues() {
     local i=0
     for issue in "${all_issues[@]}"; do
         local category="${all_categories[$i]}"
-        local points=$(echo "$issue" | cut -d: -f2)
-        local desc=$(echo "$issue" | cut -d: -f3)
-        local fix=$(echo "$issue" | cut -d: -f4)
+        # Parse pipe-delimited fields
+        local points=$(echo "$issue" | cut -d'|' -f2)
+        local desc=$(echo "$issue" | cut -d'|' -f3)
+        local fix=$(echo "$issue" | cut -d'|' -f4)
+        local needs_sudo=$(echo "$issue" | cut -d'|' -f5)
         
         # Print category header if changed
         if [ "$category" != "$last_category" ]; then
@@ -544,7 +609,7 @@ print_issues() {
         fi
         
         if [ "$skip_all" = false ]; then
-            offer_fix "$desc" "$fix" "$points"
+            offer_fix "$desc" "$fix" "$points" "$needs_sudo"
             local result=$?
             if [ $result -eq 2 ]; then
                 skip_all=true
@@ -553,7 +618,11 @@ print_issues() {
         else
             # Just show the issue without prompting
             echo -e "   ${RED}$points${NC}  $desc"
-            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+            if [ "$needs_sudo" = "true" ]; then
+                echo -e "         ${GREEN}→ Fix:${NC} sudo $fix"
+            else
+                echo -e "         ${GREEN}→ Fix:${NC} $fix"
+            fi
         fi
         
         i=$((i + 1))
@@ -562,8 +631,8 @@ print_issues() {
     
     # If any fixes were applied, offer to rescan
     if [ "$skip_all" = false ]; then
-        echo -ne "${BLUE}Rescan to update score? [Y/n]: ${NC}"
-        read -r rescan_response < /dev/tty
+        local rescan_response=""
+        safe_read rescan_response "${BLUE}Rescan to update score? [Y/n]: ${NC}"
         if [[ "$rescan_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             speak "Re-analyzing security posture..."
             calculate_scores
@@ -582,8 +651,12 @@ progress_bar() {
     local empty=$((width - filled))
     
     printf "["
-    printf "%${filled}s" | tr ' ' '█'
-    printf "%${empty}s" | tr ' ' '░'
+    if [ $filled -gt 0 ]; then
+        printf "%${filled}s" | tr ' ' '='
+    fi
+    if [ $empty -gt 0 ]; then
+        printf "%${empty}s" | tr ' ' '-'
+    fi
     printf "]"
 }
 
@@ -700,14 +773,17 @@ submit_leaderboard() {
     local score=$1
     local os=$(uname -s)
     local arch=$(uname -m)
+    local is_retry=${2:-false}
     
-    speak "Let's get you on the leaderboard..."
-    echo
+    if [ "$is_retry" = false ]; then
+        speak "Let's get you on the leaderboard..."
+        echo
+    fi
     
     # Prompt for handle (required)
+    local user_handle=""
     while true; do
-        echo -ne "${BLUE}Choose your @handle (3-20 chars, letters/numbers/underscore): ${NC}"
-        read -r user_handle < /dev/tty
+        safe_read user_handle "${BLUE}Choose your @handle (3-20 chars, letters/numbers/underscore): ${NC}"
         
         # Clean handle
         user_handle=$(echo "$user_handle" | sed 's/^@//' | tr '[:upper:]' '[:lower:]')
@@ -726,24 +802,12 @@ submit_leaderboard() {
     done
     
     # First attempt without PIN to check if handle exists
-    local json_data=$(cat <<EOF
-{
-  "instance_id": "$INSTANCE_ID",
-  "handle": "$user_handle",
-  "score": $score,
-  "os": "$os",
-  "arch": "$arch",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "network_score": $NETWORK_SCORE,
-  "perm_score": $PERM_SCORE,
-  "gateway_score": $GATEWAY_SCORE,
-  "channel_score": $CHANNEL_SCORE,
-  "skill_score": $SKILL_SCORE
-}
-EOF
-)
+    local json_data
+    json_data=$(printf '{"instance_id":"%s","handle":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
+        "$INSTANCE_ID" "$user_handle" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
     
-    local response=$(curl -s -X POST \
+    local response
+    response=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -d "$json_data" \
         "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
@@ -752,32 +816,26 @@ EOF
     if echo "$response" | grep -q '"needsPin":true'; then
         echo
         echo -e "${GOLD}Handle @$user_handle is already claimed.${NC}"
-        echo -ne "${BLUE}Enter your 4-digit PIN to update your score (or 'new' for different handle): ${NC}"
-        read -r user_pin < /dev/tty
+        
+        local user_pin=""
+        safe_read user_pin "${BLUE}Enter your 4-digit PIN to update your score (or 'new' for different handle): ${NC}"
         
         if [ "$user_pin" = "new" ] || [ "$user_pin" = "NEW" ]; then
-            submit_leaderboard "$score"
+            submit_leaderboard "$score" true
+            return
+        fi
+        
+        # Validate PIN format
+        if ! echo "$user_pin" | grep -qE '^[0-9]{4}$'; then
+            echo -e "${RED}PIN must be exactly 4 digits.${NC}"
+            submit_leaderboard "$score" true
             return
         fi
         
         # Retry with PIN
-        json_data=$(cat <<EOF
-{
-  "instance_id": "$INSTANCE_ID",
-  "handle": "$user_handle",
-  "pin": "$user_pin",
-  "score": $score,
-  "os": "$os",
-  "arch": "$arch",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "network_score": $NETWORK_SCORE,
-  "perm_score": $PERM_SCORE,
-  "gateway_score": $GATEWAY_SCORE,
-  "channel_score": $CHANNEL_SCORE,
-  "skill_score": $SKILL_SCORE
-}
-EOF
-)
+        json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
+            "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
+        
         response=$(curl -s -X POST \
             -H "Content-Type: application/json" \
             -d "$json_data" \
@@ -786,7 +844,7 @@ EOF
         # Check for wrong PIN
         if echo "$response" | grep -q '"error":"invalid_pin"'; then
             echo -e "${RED}Incorrect PIN. Try again or choose a different handle.${NC}"
-            submit_leaderboard "$score"
+            submit_leaderboard "$score" true
             return
         fi
     fi
@@ -795,9 +853,9 @@ EOF
     if echo "$response" | grep -q '"needsNewPin":true'; then
         echo
         echo -e "${GREEN}Handle @$user_handle is available!${NC}"
+        local user_pin=""
         while true; do
-            echo -ne "${BLUE}Create a 4-digit PIN to protect your handle: ${NC}"
-            read -r user_pin < /dev/tty
+            safe_read user_pin "${BLUE}Create a 4-digit PIN to protect your handle: ${NC}"
             
             if ! echo "$user_pin" | grep -qE '^[0-9]{4}$'; then
                 echo -e "${RED}PIN must be exactly 4 digits.${NC}"
@@ -807,23 +865,9 @@ EOF
         done
         
         # Retry with new PIN
-        json_data=$(cat <<EOF
-{
-  "instance_id": "$INSTANCE_ID",
-  "handle": "$user_handle",
-  "pin": "$user_pin",
-  "score": $score,
-  "os": "$os",
-  "arch": "$arch",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "network_score": $NETWORK_SCORE,
-  "perm_score": $PERM_SCORE,
-  "gateway_score": $GATEWAY_SCORE,
-  "channel_score": $CHANNEL_SCORE,
-  "skill_score": $SKILL_SCORE
-}
-EOF
-)
+        json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
+            "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
+        
         response=$(curl -s -X POST \
             -H "Content-Type: application/json" \
             -d "$json_data" \
@@ -892,8 +936,8 @@ offer_tailscale_upgrade() {
         
         # Prompt for install
         speak "Boss, I can get you to full combat readiness. 30 seconds for Stark Certified armor."
-        echo -ne "${BLUE}Install Tailscale now? [Y/n]: ${NC}"
-        read -r response < /dev/tty
+        local response=""
+        safe_read response "${BLUE}Install Tailscale now? [Y/n]: ${NC}"
         
         if [[ "$response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             install_tailscale
@@ -925,8 +969,8 @@ offer_tailscale_upgrade() {
     echo -e "   ${GRAY}See how your security compares to other OpenClaw deployments.${NC}"
     echo
     speak "Boss, want to submit your score to the global leaderboard?"
-    echo -ne "${BLUE}Submit to leaderboard? [Y/n]: ${NC}"
-    read -r lb_response < /dev/tty
+    local lb_response=""
+    safe_read lb_response "${BLUE}Submit to leaderboard? [Y/n]: ${NC}"
     
     if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
         submit_leaderboard $TOTAL_SCORE
