@@ -872,7 +872,7 @@
                     Install via curl
                 </div>
                 <div class="install-command">
-                    <code>curl -sSL friday-boi.pages.dev | bash</code>
+                    <code>curl -sSL https://friday-boi.pages.dev/friday.sh | bash</code>
                     <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
                 </div>
                 <div class="install-meta">
@@ -1097,7 +1097,7 @@
 
     <script>
         function copyCommand(btn) {
-            navigator.clipboard.writeText('curl -sSL friday-boi.pages.dev | bash').then(() => {
+            navigator.clipboard.writeText('curl -sSL https://friday-boi.pages.dev/friday.sh | bash').then(() => {
                 btn.textContent = 'Copied!';
                 btn.classList.add('copied');
                 setTimeout(() => {
