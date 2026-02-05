@@ -8,15 +8,20 @@
 # Don't use set -e for piped execution - handle errors manually
 # set -e
 
-# Colors
-BLACK='\033[0;30m'
-BLUE='\033[38;5;81m'      # Arc reactor blue
-GREEN='\033[38;5;84m'     # JARVIS green
-GOLD='\033[38;5;214m'     # Stark gold
-RED='\033[38;5;196m'      # Alert red
-WHITE='\033[38;5;255m'    # Soft white
-GRAY='\033[38;5;240m'     # Muted
-NC='\033[0m'
+# Colors (use real ESC so we don't rely on `echo -e`)
+BLACK=$'\033[0;30m'
+BLUE=$'\033[38;5;81m'      # Arc reactor blue
+GREEN=$'\033[38;5;84m'     # JARVIS green
+GOLD=$'\033[38;5;214m'     # Stark gold
+RED=$'\033[38;5;196m'      # Alert red
+WHITE=$'\033[38;5;255m'    # Soft white
+GRAY=$'\033[38;5;240m'     # Muted
+NC=$'\033[0m'
+
+# Disable colors when not writing to a real TTY (prevents escape garbage in logs/pastes)
+if ! [ -t 1 ]; then
+  BLACK=''; BLUE=''; GREEN=''; GOLD=''; RED=''; WHITE=''; GRAY=''; NC=''
+fi
 
 # Score tracking
 NETWORK_SCORE=0
@@ -30,13 +35,40 @@ TOTAL_SCORE=0
 MALICIOUS_SKILLS=()
 UNKNOWN_SKILLS=()
 
-# Issue tracking for detailed breakdown
-# Format: "id|points|description|fix_command|needs_sudo"
-NETWORK_ISSUES=()
-PERM_ISSUES=()
-GATEWAY_ISSUES=()
-CHANNEL_ISSUES=()
-SKILL_ISSUES=()
+# Issue tracking (structured fields; command can contain any characters)
+ISSUE_CATEGORY=()
+ISSUE_POINTS=()
+ISSUE_DESC=()
+ISSUE_CMD=()
+ISSUE_NEEDS_SUDO=()
+ISSUE_MANUAL=()
+
+issues_reset() {
+    ISSUE_CATEGORY=()
+    ISSUE_POINTS=()
+    ISSUE_DESC=()
+    ISSUE_CMD=()
+    ISSUE_NEEDS_SUDO=()
+    ISSUE_MANUAL=()
+}
+
+# issue_add <Category> <Points> <Description> <Command> <NeedsSudo:true|false> <Manual:true|false>
+# Command must be COMMAND-ONLY (no prose). Leave Command empty for manual-only guidance.
+issue_add() {
+    local category="$1"
+    local points="$2"
+    local desc="$3"
+    local cmd="${4:-}"
+    local needs_sudo="${5:-false}"
+    local manual="${6:-false}"
+
+    ISSUE_CATEGORY+=("$category")
+    ISSUE_POINTS+=("$points")
+    ISSUE_DESC+=("$desc")
+    ISSUE_CMD+=("$cmd")
+    ISSUE_NEEDS_SUDO+=("$needs_sudo")
+    ISSUE_MANUAL+=("$manual")
+}
 
 # Instance ID
 INSTANCE_ID="friday-$(date +%s | tail -c 5)"
@@ -111,6 +143,69 @@ safe_read() {
     IFS= read -r -t 5 "$var_name" || eval "$var_name=''"
 }
 
+# sudo preflight (run once when the first sudo fix is chosen)
+SUDO_VALIDATED=false
+SUDO_KEEPALIVE_PID=""
+
+sudo_keepalive_start() {
+    # Best-effort: keep sudo timestamp alive until script exits.
+    ( while true; do sudo -n true 2>/dev/null || exit 0; sleep 60; done ) &
+    SUDO_KEEPALIVE_PID=$!
+}
+
+sudo_cleanup() {
+    if [ -n "${SUDO_KEEPALIVE_PID:-}" ] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    fi
+}
+trap sudo_cleanup EXIT
+
+ensure_sudo() {
+    if [ "$SUDO_VALIDATED" = true ]; then
+        return 0
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo -e "${RED}✗${NC} sudo not found; can't run privileged steps."
+        return 1
+    fi
+    echo -e "${GRAY}sudo password may be required...${NC}"
+    if ! sudo -v; then
+        echo -e "${RED}✗${NC} sudo authentication failed."
+        return 1
+    fi
+    SUDO_VALIDATED=true
+    sudo_keepalive_start
+    return 0
+}
+
+# Robust JSON POST helper for leaderboard (captures HTTP status + body)
+HTTP_STATUS=""
+HTTP_BODY=""
+HTTP_ERR=""
+
+http_post_json() {
+    local url="$1"
+    local json="$2"
+
+    local body_file
+    local err_file
+    body_file=$(mktemp 2>/dev/null || mktemp -t friday_body)
+    err_file=$(mktemp 2>/dev/null || mktemp -t friday_err)
+
+    local http
+    http=$(curl -sS --connect-timeout 5 --max-time 15         -H "Content-Type: application/json"         -d "$json"         -o "$body_file"         -w "%{http_code}"         "$url" 2>"$err_file")
+    local rc=$?
+
+    HTTP_STATUS="$http"
+    HTTP_BODY=$(cat "$body_file" 2>/dev/null || true)
+    HTTP_ERR=$(cat "$err_file" 2>/dev/null || true)
+
+    rm -f "$body_file" "$err_file" 2>/dev/null || true
+
+    return $rc
+}
+
+
 # Install Tailscale
 install_tailscale() {
     speak "Initiating armor upgrade sequence..."
@@ -121,8 +216,9 @@ install_tailscale() {
     echo -e "${GREEN}✓${NC} Tailscale installed"
     echo
     
-    # Start and authenticate
-    speak "Connecting to Stark Industries secure network..."
+    # Start and authenticate (interactive)
+    speak "Connecting to Stark Industries secure network... (interactive)"
+    ensure_sudo || { echo -e "${RED}✗${NC} Skipping Tailscale auth (no sudo)."; return; }
     sudo tailscale up
     
     echo
@@ -130,7 +226,7 @@ install_tailscale() {
     
     # Reconfigure firewall for Tailscale-only
     if command -v ufw &> /dev/null; then
-        sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null || true
+        ensure_sudo && sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null || true
     fi
 }
 
@@ -284,7 +380,7 @@ check_skills() {
         checked_skills=$((checked_skills + 1))
         
         # Query Clawdex API
-        local verdict=$(curl -s --max-time 5 "https://clawdex.koi.security/api/skill/$skill_name" 2>/dev/null | grep -o '"verdict":"[^"]*"' | cut -d'"' -f4)
+        local verdict=$(curl -fsS --max-time 5 "https://clawdex.koi.security/api/skill/$skill_name" 2>/dev/null | grep -o '"verdict":"[^"]*"' | cut -d'"' -f4 || true)
         
         case "$verdict" in
             "malicious")
@@ -319,6 +415,7 @@ fix_firewall() {
     speak "Locking down perimeter defenses..."
     
     if command -v ufw &> /dev/null; then
+        ensure_sudo || { echo -e "${RED}✗${NC} Skipping firewall auto-fix (no sudo)."; return; }
         # Reset and configure UFW
         sudo ufw --force reset &> /dev/null || true
         sudo ufw default deny incoming &> /dev/null || true
@@ -370,107 +467,120 @@ fix_gateway_binding() {
 }
 
 # Calculate scores with issue tracking
-# Using pipe (|) as delimiter instead of colon (:) since commands contain colons
 calculate_scores() {
-    # Reset issues
-    NETWORK_ISSUES=()
-    PERM_ISSUES=()
-    GATEWAY_ISSUES=()
-    CHANNEL_ISSUES=()
-    SKILL_ISSUES=()
-    
+    issues_reset
+
     # Network (30 points)
-    local tailscale=$(check_tailscale)
-    local firewall=$(check_firewall)
-    local ssh=$(check_ssh_exposure)
-    
+    local tailscale
+    local firewall
+    local ssh
+    tailscale=$(check_tailscale)
+    firewall=$(check_firewall)
+    ssh=$(check_ssh_exposure)
+
     NETWORK_SCORE=0
     if [ "$tailscale" = "active" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 15))
     elif [ "$tailscale" = "installed" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 8))
-        NETWORK_ISSUES+=("tailscale_inactive|-7|Tailscale installed but not connected|tailscale up|true")
+        issue_add "Network" "-7" "Tailscale installed but not connected (interactive login)." "tailscale up" "true" "true"
     else
-        NETWORK_ISSUES+=("tailscale_missing|-15|Tailscale not installed|curl -fsSL https://tailscale.com/install.sh | sh|false")
+        issue_add "Network" "-15" "Tailscale not installed." "curl -fsSL https://tailscale.com/install.sh | sh" "false" "false"
     fi
-    
+
     if [ "$firewall" = "active" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 10))
     else
-        NETWORK_ISSUES+=("firewall_inactive|-10|Firewall not active|ufw enable|true")
+        # OS-specific guidance
+        local os_name
+        os_name=$(uname -s)
+        if [ "$os_name" = "Darwin" ]; then
+            # macOS: UFW doesn't exist; keep this as a manual step.
+            issue_add "Network" "-10" "Firewall not active (macOS). Enable the macOS firewall in System Settings → Network → Firewall." "" "false" "true"
+        else
+            if command -v ufw >/dev/null 2>&1; then
+                issue_add "Network" "-10" "Firewall not active. Enable UFW (or configure an equivalent)." "ufw enable" "true" "false"
+            else
+                issue_add "Network" "-10" "Firewall not detected/active. Configure a firewall (ufw/iptables/firewalld) appropriate for your OS." "" "false" "true"
+            fi
+        fi
     fi
-    
+
     if [ "$ssh" = "local-only" ] || [ "$ssh" = "disabled" ]; then
         NETWORK_SCORE=$((NETWORK_SCORE + 5))
     elif [ "$ssh" = "exposed" ]; then
-        NETWORK_ISSUES+=("ssh_exposed|-5|SSH exposed to internet|echo 'ListenAddress 127.0.0.1' >> /etc/ssh/sshd_config && systemctl restart sshd|true")
+        issue_add "Network" "-5" "SSH appears exposed to the internet. Restrict sshd ListenAddress or use Tailscale SSH." "" "false" "true"
     fi
-    
+
     # Permissions (25 points)
     PERM_SCORE=25
     if [ -d "$HOME/.openclaw" ]; then
-        local perms=$(stat -c "%a" "$HOME/.openclaw" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw" 2>/dev/null)
+        local perms
+        perms=$(stat -c "%a" "$HOME/.openclaw" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw" 2>/dev/null)
         if [ "$perms" != "700" ]; then
             PERM_SCORE=$((PERM_SCORE - 5))
-            PERM_ISSUES+=("dir_perms|-5|~/.openclaw has loose permissions ($perms)|chmod 700 ~/.openclaw|false")
+            issue_add "Permissions" "-5" "~/.openclaw has loose permissions ($perms)." "chmod 700 ~/.openclaw" "false" "false"
         fi
     fi
-    
+
     if [ -f "$HOME/.openclaw/config.json" ]; then
-        local config_perms=$(stat -c "%a" "$HOME/.openclaw/config.json" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw/config.json" 2>/dev/null)
+        local config_perms
+        config_perms=$(stat -c "%a" "$HOME/.openclaw/config.json" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw/config.json" 2>/dev/null)
         if [ "$config_perms" != "600" ]; then
             PERM_SCORE=$((PERM_SCORE - 5))
-            PERM_ISSUES+=("config_perms|-5|config.json has loose permissions ($config_perms)|chmod 600 ~/.openclaw/config.json|false")
+            issue_add "Permissions" "-5" "config.json has loose permissions ($config_perms)." "chmod 600 ~/.openclaw/config.json" "false" "false"
         fi
     fi
-    
+
     # Gateway (25 points)
-    local gateway=$(check_gateway_binding)
-    local token_issues=$(check_auth_tokens)
-    
+    local gateway
+    local token_issues
+    gateway=$(check_gateway_binding)
+    token_issues=$(check_auth_tokens)
+
     GATEWAY_SCORE=25
     if [ "$gateway" = "exposed" ]; then
         GATEWAY_SCORE=10
-        GATEWAY_ISSUES+=("gateway_exposed|-15|Gateway bound to 0.0.0.0 (public)|Use text editor to change bind to 127.0.0.1 in ~/.openclaw/config.json|false")
+        issue_add "Gateway" "-15" "Gateway bound to 0.0.0.0 (public). Bind to 127.0.0.1 in ~/.openclaw/config.json." "" "false" "true"
     elif [ "$gateway" = "unknown" ]; then
         GATEWAY_SCORE=15
-        GATEWAY_ISSUES+=("gateway_unknown|-10|Could not verify gateway binding|Check gateway.bind in config.json is set to 127.0.0.1|false")
+        issue_add "Gateway" "-10" "Could not verify gateway binding. Ensure gateway.bind is 127.0.0.1 in ~/.openclaw/config.json." "" "false" "true"
     fi
-    
+
     if [ "$token_issues" -gt 0 ]; then
         GATEWAY_SCORE=$((GATEWAY_SCORE - 10))
-        GATEWAY_ISSUES+=("weak_token|-10|Auth token is too short (<32 chars)|openssl rand -hex 32|false")
+        issue_add "Gateway" "-10" "Auth token is too short (<32 chars). Generate a longer token and update config." "openssl rand -hex 32" "false" "false"
     fi
-    
+
     # Channels (20 points)
     CHANNEL_SCORE=20
     if [ -f "$HOME/.openclaw/config.json" ]; then
         if grep -q '"groupPolicy": *"open"' "$HOME/.openclaw/config.json" 2>/dev/null; then
             CHANNEL_SCORE=$((CHANNEL_SCORE - 10))
-            CHANNEL_ISSUES+=("open_groups|-10|Group policy is 'open' (anyone can message)|Change groupPolicy to 'allowlist' in ~/.openclaw/config.json|false")
+            issue_add "Channels" "-10" "Group policy is open (anyone can message). Set groupPolicy to allowlist in config." "" "false" "true"
         fi
-        
+
         if ! grep -q '"allowlist"' "$HOME/.openclaw/config.json" 2>/dev/null; then
             CHANNEL_SCORE=$((CHANNEL_SCORE - 5))
-            CHANNEL_ISSUES+=("no_allowlist|-5|No allowlist configured|Add allowlist array to ~/.openclaw/config.json channel config|false")
+            issue_add "Channels" "-5" "No allowlist configured. Add an allowlist to your channel config." "" "false" "true"
         fi
     fi
-    
+
     # Skills (20 points) - Clawdex scan
     SKILL_SCORE=$(check_skills)
-    
-    # Add skill issues from check
+
     if [ ${#MALICIOUS_SKILLS[@]} -gt 0 ]; then
         for skill in "${MALICIOUS_SKILLS[@]}"; do
-            SKILL_ISSUES+=("malicious_$skill|-50|Malicious skill detected: $skill|npm uninstall -g $skill|false")
+            issue_add "Skills" "-50" "Malicious skill detected: $skill (remove immediately)." "npm uninstall -g $skill" "false" "false"
         done
     fi
+
     if [ ${#UNKNOWN_SKILLS[@]} -gt 0 ]; then
         for skill in "${UNKNOWN_SKILLS[@]}"; do
-            SKILL_ISSUES+=("unknown_$skill|-5|Unverified skill: $skill|Check https://clawdex.koi.security or remove if untrusted|false")
+            issue_add "Skills" "-5" "Unverified skill: $skill (review in Clawdex or remove if untrusted)." "" "false" "true"
         done
     fi
-    
+
     TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE + SKILL_SCORE))
 }
 
@@ -479,12 +589,13 @@ execute_fix() {
     local cmd="$1"
     local needs_sudo="$2"
     local exit_code=0
-    
-    # Handle multi-part commands (&& or ; separated)
+
+    rm -f /tmp/friday_error.log 2>/dev/null || true
+
     if [ "$needs_sudo" = "true" ]; then
-        # For sudo commands, run entire command block with sudo bash
+        ensure_sudo || return 1
+
         echo -e "         ${GRAY}Running with sudo...${NC}"
-        # Use bash -c to handle complex commands properly
         if sudo bash -c "$cmd" 2>/tmp/friday_error.log; then
             echo -e "         ${GREEN}✓ Done${NC}"
             return 0
@@ -497,7 +608,6 @@ execute_fix() {
             return 1
         fi
     else
-        # No sudo needed
         if bash -c "$cmd" 2>/tmp/friday_error.log; then
             echo -e "         ${GREEN}✓ Done${NC}"
             return 0
@@ -513,14 +623,36 @@ execute_fix() {
 }
 
 # Offer to run a fix command
+FRIDAY_FIX_ATTEMPTED=false
+
 offer_fix() {
     local desc="$1"
-    local fix_cmd="$2"
+    local fix_cmd="${2:-}"
     local points="$3"
-    local needs_sudo="$4"
+    local needs_sudo="${4:-false}"
+    local manual="${5:-false}"
     local fix_response=""
-    
+
+    FRIDAY_FIX_ATTEMPTED=false
+
     echo -e "   ${RED}$points${NC}  $desc"
+
+    if [ "$manual" = "true" ] || [ -z "$fix_cmd" ]; then
+        if [ -n "$fix_cmd" ]; then
+            if [ "$needs_sudo" = "true" ]; then
+                echo -e "         ${GREEN}→ Manual step:${NC} sudo $fix_cmd"
+            else
+                echo -e "         ${GREEN}→ Manual step:${NC} $fix_cmd"
+            fi
+        else
+            echo -e "         ${GREEN}→ Manual step:${NC} No command provided (see guidance above)."
+        fi
+        return 1
+    fi
+
+    # Ensure command is command-only (strip accidental leading sudo)
+    fix_cmd="${fix_cmd#sudo }"
+
     if [ "$needs_sudo" = "true" ]; then
         echo -e "         ${GRAY}Command:${NC} sudo $fix_cmd"
         safe_read fix_response "         ${BLUE}Run with sudo? [Y/n/skip all]: ${NC}"
@@ -528,109 +660,79 @@ offer_fix() {
         echo -e "         ${GRAY}Command:${NC} $fix_cmd"
         safe_read fix_response "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
     fi
-    
+
     case "$fix_response" in
         [Ss]|[Ss]kip*)
             echo -e "         ${GRAY}Skipping all remaining fixes...${NC}"
-            return 2  # Signal to skip all
+            return 2
             ;;
         [Nn]|[Nn]o)
             echo -e "         ${GRAY}Skipped${NC}"
             return 1
             ;;
         *)
+            FRIDAY_FIX_ATTEMPTED=true
             echo -e "         ${GOLD}Running...${NC}"
-            execute_fix "$fix_cmd" "$needs_sudo"
-            return $?
+            execute_fix "$fix_cmd" "$needs_sudo" || true
+            return 0
             ;;
     esac
 }
 
 # Print detailed issues breakdown with interactive fixes
 print_issues() {
-    local has_issues=false
     local skip_all=false
-    
-    # Check if any issues exist
-    if [ ${#NETWORK_ISSUES[@]} -gt 0 ] || [ ${#PERM_ISSUES[@]} -gt 0 ] || \
-       [ ${#GATEWAY_ISSUES[@]} -gt 0 ] || [ ${#CHANNEL_ISSUES[@]} -gt 0 ] || \
-       [ ${#SKILL_ISSUES[@]} -gt 0 ]; then
-        has_issues=true
-    fi
-    
-    if [ "$has_issues" = false ]; then
+    local fixes_attempted=false
+
+    if [ ${#ISSUE_CATEGORY[@]} -eq 0 ]; then
         echo -e "${GREEN}✓ Perfect score! No issues detected.${NC}"
         echo
         return
     fi
-    
+
     echo -e "${WHITE}🔍 ISSUES FOUND — Fix now or skip:${NC}"
     echo
-    
-    # Process all issues with interactive prompts
-    local all_issues=()
-    local all_categories=()
-    
-    for issue in "${NETWORK_ISSUES[@]}"; do
-        all_issues+=("$issue")
-        all_categories+=("Network")
-    done
-    for issue in "${PERM_ISSUES[@]}"; do
-        all_issues+=("$issue")
-        all_categories+=("Permissions")
-    done
-    for issue in "${GATEWAY_ISSUES[@]}"; do
-        all_issues+=("$issue")
-        all_categories+=("Gateway")
-    done
-    for issue in "${CHANNEL_ISSUES[@]}"; do
-        all_issues+=("$issue")
-        all_categories+=("Channels")
-    done
-    for issue in "${SKILL_ISSUES[@]}"; do
-        all_issues+=("$issue")
-        all_categories+=("Skills")
-    done
-    
+
     local last_category=""
-    local i=0
-    for issue in "${all_issues[@]}"; do
-        local category="${all_categories[$i]}"
-        # Parse pipe-delimited fields
-        local points=$(echo "$issue" | cut -d'|' -f2)
-        local desc=$(echo "$issue" | cut -d'|' -f3)
-        local fix=$(echo "$issue" | cut -d'|' -f4)
-        local needs_sudo=$(echo "$issue" | cut -d'|' -f5)
-        
-        # Print category header if changed
+    for ((i=0; i<${#ISSUE_CATEGORY[@]}; i++)); do
+        local category="${ISSUE_CATEGORY[$i]}"
+        local points="${ISSUE_POINTS[$i]}"
+        local desc="${ISSUE_DESC[$i]}"
+        local cmd="${ISSUE_CMD[$i]}"
+        local needs_sudo="${ISSUE_NEEDS_SUDO[$i]}"
+        local manual="${ISSUE_MANUAL[$i]}"
+
         if [ "$category" != "$last_category" ]; then
             echo -e "   ${BLUE}━━━ $category ━━━${NC}"
             last_category="$category"
         fi
-        
+
         if [ "$skip_all" = false ]; then
-            offer_fix "$desc" "$fix" "$points" "$needs_sudo"
+            offer_fix "$desc" "$cmd" "$points" "$needs_sudo" "$manual"
             local result=$?
+            if [ "$FRIDAY_FIX_ATTEMPTED" = true ]; then
+                fixes_attempted=true
+            fi
             if [ $result -eq 2 ]; then
                 skip_all=true
                 echo
             fi
         else
-            # Just show the issue without prompting
             echo -e "   ${RED}$points${NC}  $desc"
-            if [ "$needs_sudo" = "true" ]; then
-                echo -e "         ${GREEN}→ Fix:${NC} sudo $fix"
+            if [ "$manual" = "true" ] || [ -z "$cmd" ]; then
+                echo -e "         ${GREEN}→ Fix:${NC} (manual)"
             else
-                echo -e "         ${GREEN}→ Fix:${NC} $fix"
+                if [ "$needs_sudo" = "true" ]; then
+                    echo -e "         ${GREEN}→ Fix:${NC} sudo $cmd"
+                else
+                    echo -e "         ${GREEN}→ Fix:${NC} $cmd"
+                fi
             fi
         fi
-        
-        i=$((i + 1))
     done
     echo
-    
-    # If any fixes were applied, offer to rescan
-    if [ "$skip_all" = false ]; then
+
+    if [ "$fixes_attempted" = true ]; then
         local rescan_response=""
         safe_read rescan_response "${BLUE}Rescan to update score? [Y/n]: ${NC}"
         if [[ "$rescan_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
@@ -807,10 +909,23 @@ submit_leaderboard() {
         "$INSTANCE_ID" "$user_handle" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
     
     local response
-    response=$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d "$json_data" \
-        "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
+    if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+        echo -e "${RED}Failed to submit (network error).${NC}"
+        if [ -n "${HTTP_ERR:-}" ]; then
+            echo -e "${GRAY}${HTTP_ERR}${NC}"
+        fi
+        return 1
+    fi
+    response="$HTTP_BODY"
+    if [ -z "$response" ]; then
+        echo -e "${RED}Failed to submit (empty response, HTTP ${HTTP_STATUS:-?}).${NC}"
+        return 1
+    fi
+    if [ "${HTTP_STATUS:-0}" -lt 200 ] 2>/dev/null || [ "${HTTP_STATUS:-0}" -ge 300 ] 2>/dev/null; then
+        echo -e "${RED}Failed to submit (HTTP ${HTTP_STATUS:-?}).${NC}"
+        echo -e "${GRAY}${response:0:400}${NC}"
+        return 1
+    fi
     
     # Check if handle is taken (needs PIN)
     if echo "$response" | grep -q '"needsPin":true'; then
@@ -836,10 +951,23 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        response=$(curl -s -X POST \
-            -H "Content-Type: application/json" \
-            -d "$json_data" \
-            "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
+        if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+            echo -e "${RED}Failed to submit (network error).${NC}"
+            if [ -n "${HTTP_ERR:-}" ]; then
+                echo -e "${GRAY}${HTTP_ERR}${NC}"
+            fi
+            return 1
+        fi
+        response="$HTTP_BODY"
+        if [ -z "$response" ]; then
+            echo -e "${RED}Failed to submit (empty response, HTTP ${HTTP_STATUS:-?}).${NC}"
+            return 1
+        fi
+        if [ "${HTTP_STATUS:-0}" -lt 200 ] 2>/dev/null || [ "${HTTP_STATUS:-0}" -ge 300 ] 2>/dev/null; then
+            echo -e "${RED}Failed to submit (HTTP ${HTTP_STATUS:-?}).${NC}"
+            echo -e "${GRAY}${response:0:400}${NC}"
+            return 1
+        fi
         
         # Check for wrong PIN
         if echo "$response" | grep -q '"error":"invalid_pin"'; then
@@ -868,10 +996,23 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        response=$(curl -s -X POST \
-            -H "Content-Type: application/json" \
-            -d "$json_data" \
-            "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null)
+        if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+            echo -e "${RED}Failed to submit (network error).${NC}"
+            if [ -n "${HTTP_ERR:-}" ]; then
+                echo -e "${GRAY}${HTTP_ERR}${NC}"
+            fi
+            return 1
+        fi
+        response="$HTTP_BODY"
+        if [ -z "$response" ]; then
+            echo -e "${RED}Failed to submit (empty response, HTTP ${HTTP_STATUS:-?}).${NC}"
+            return 1
+        fi
+        if [ "${HTTP_STATUS:-0}" -lt 200 ] 2>/dev/null || [ "${HTTP_STATUS:-0}" -ge 300 ] 2>/dev/null; then
+            echo -e "${RED}Failed to submit (HTTP ${HTTP_STATUS:-?}).${NC}"
+            echo -e "${GRAY}${response:0:400}${NC}"
+            return 1
+        fi
     fi
     
     # Check for errors
