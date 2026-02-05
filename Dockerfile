@@ -18,7 +18,6 @@ RUN mkdir -p /app/data /app/logs
 
 # Copy app source
 COPY server.js ./
-COPY src/ ./src/
 
 # Set permissions
 RUN chown -R node:node /app/data /app/logs
