@@ -446,9 +446,20 @@ offer_fix() {
     local fix_cmd="$2"
     local points="$3"
     
+    # Check if command likely needs sudo
+    local needs_sudo=false
+    if [[ "$fix_cmd" == *"ufw"* ]] || [[ "$fix_cmd" == *"/etc/"* ]] || [[ "$fix_cmd" == *"tailscale"* ]]; then
+        needs_sudo=true
+    fi
+    
     echo -e "   ${RED}$points${NC}  $desc"
-    echo -e "         ${GRAY}Command:${NC} $fix_cmd"
-    echo -ne "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
+    if [ "$needs_sudo" = true ]; then
+        echo -e "         ${GRAY}Command:${NC} sudo $fix_cmd"
+        echo -ne "         ${BLUE}Run with sudo? [Y/n/skip all]: ${NC}"
+    else
+        echo -e "         ${GRAY}Command:${NC} $fix_cmd"
+        echo -ne "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
+    fi
     read -r fix_response < /dev/tty
     
     case "$fix_response" in
@@ -462,7 +473,11 @@ offer_fix() {
             ;;
         *)
             echo -e "         ${GOLD}Running...${NC}"
-            eval "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed (may need sudo)${NC}"
+            if [ "$needs_sudo" = true ]; then
+                sudo sh -c "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed${NC}"
+            else
+                eval "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed${NC}"
+            fi
             return 0
             ;;
     esac
@@ -796,25 +811,22 @@ offer_tailscale_upgrade() {
         fi
     fi
     
-    # Leaderboard submission (for scores 70+)
-    if [ $TOTAL_SCORE -ge 70 ]; then
-        section
+    # Leaderboard submission (any score)
+    section
+    echo
+    echo -e "${GOLD}🏆 GLOBAL LEADERBOARD${NC}"
+    echo
+    echo -e "   ${GRAY}See how your security compares to other OpenClaw deployments.${NC}"
+    echo
+    speak "Boss, want to submit your score to the global leaderboard?"
+    echo -ne "${BLUE}Submit to leaderboard? [Y/n]: ${NC}"
+    read -r lb_response < /dev/tty
+    
+    if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
+        submit_leaderboard $TOTAL_SCORE
+    else
         echo
-        echo -e "${GOLD}🏆 TOP AGENTS NETWORK${NC}"
-        echo
-        echo -e "   ${GRAY}Your armor rating qualifies for global ranking.${NC}"
-        echo -e "   ${GRAY}See how you compare to other Stark Industries AI deployments.${NC}"
-        echo
-        speak "Boss, your security score qualifies for the global leaderboard. Shall I submit it?"
-        echo -ne "${BLUE}Submit to FRIDAY leaderboard? [Y/n]: ${NC}"
-        read -r lb_response < /dev/tty
-        
-        if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
-            submit_leaderboard $TOTAL_SCORE
-        else
-            echo
-            speak "Understood. Your results stay local."
-        fi
+        speak "Understood. Your results stay local."
     fi
     
     speak "Your AI is secure, boss. I'll keep watch."
