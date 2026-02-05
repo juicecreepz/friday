@@ -22,7 +22,12 @@ NETWORK_SCORE=0
 PERM_SCORE=0
 GATEWAY_SCORE=0
 CHANNEL_SCORE=0
+SKILL_SCORE=0
 TOTAL_SCORE=0
+
+# Malicious skills tracking
+MALICIOUS_SKILLS=()
+UNKNOWN_SKILLS=()
 
 # Instance ID
 INSTANCE_ID="friday-$(date +%s | tail -c 5)"
@@ -201,6 +206,74 @@ check_channel_policies() {
     echo $score
 }
 
+# Check installed skills against Clawdex API
+check_skills() {
+    local score=20
+    local skills_dir="$HOME/.openclaw/skills"
+    
+    # Reset tracking arrays
+    MALICIOUS_SKILLS=()
+    UNKNOWN_SKILLS=()
+    
+    # Check if skills directory exists
+    if [ ! -d "$skills_dir" ]; then
+        # No skills installed = full score
+        echo $score
+        return
+    fi
+    
+    # Count total skills
+    local total_skills=0
+    local checked_skills=0
+    
+    for skill_dir in "$skills_dir"/*; do
+        [ -d "$skill_dir" ] || continue
+        total_skills=$((total_skills + 1))
+    done
+    
+    if [ $total_skills -eq 0 ]; then
+        echo $score
+        return
+    fi
+    
+    # Check each skill against Clawdex
+    for skill_dir in "$skills_dir"/*; do
+        [ -d "$skill_dir" ] || continue
+        
+        local skill_name=$(basename "$skill_dir")
+        checked_skills=$((checked_skills + 1))
+        
+        # Query Clawdex API
+        local verdict=$(curl -s --max-time 5 "https://clawdex.koi.security/api/skill/$skill_name" 2>/dev/null | grep -o '"verdict":"[^"]*"' | cut -d'"' -f4)
+        
+        case "$verdict" in
+            "malicious")
+                MALICIOUS_SKILLS+=("$skill_name")
+                score=$((score - 50))  # Heavy penalty
+                ;;
+            "unknown")
+                UNKNOWN_SKILLS+=("$skill_name")
+                score=$((score - 10))
+                ;;
+            "benign")
+                # Safe, no penalty
+                ;;
+            *)
+                # API failed or skill not in database, treat as unknown
+                UNKNOWN_SKILLS+=("$skill_name")
+                score=$((score - 5))
+                ;;
+        esac
+    done
+    
+    # Don't let score go below 0
+    if [ $score -lt 0 ]; then
+        score=0
+    fi
+    
+    echo $score
+}
+
 # Auto-fix functions
 fix_firewall() {
     speak "Locking down perimeter defenses..."
@@ -286,7 +359,10 @@ calculate_scores() {
     # Channels (20 points)
     CHANNEL_SCORE=$(check_channel_policies)
     
-    TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE))
+    # Skills (20 points) - Clawdex scan
+    SKILL_SCORE=$(check_skills)
+    
+    TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE + SKILL_SCORE))
 }
 
 # Print progress bar
@@ -359,7 +435,44 @@ print_results() {
     printf "   Channels:    "
     progress_bar $CHANNEL_SCORE 20
     printf "  %s/%s\n" "$CHANNEL_SCORE" "20"
+    
+    printf "   Skills:      "
+    progress_bar $SKILL_SCORE 20
+    printf "  %s/%s\n" "$SKILL_SCORE" "20"
     echo
+    
+    # Malicious skills warning
+    if [ ${#MALICIOUS_SKILLS[@]} -gt 0 ]; then
+        section
+        echo
+        echo -e "${RED}🚨 CRITICAL: MALICIOUS SKILLS DETECTED${NC}"
+        echo
+        echo -e "   ${RED}The following skills are flagged as MALICIOUS by Clawdex:${NC}"
+        for skill in "${MALICIOUS_SKILLS[@]}"; do
+            echo -e "   ${RED}  • $skill 🚫${NC}"
+        done
+        echo
+        echo -e "   ${GOLD}Immediate action required:${NC}"
+        echo -e "   ${WHITE}  npm uninstall -g <skill-name>${NC}"
+        echo
+        speak "Boss, I've detected compromised armor components. Immediate removal required."
+        echo
+    fi
+    
+    # Unknown skills warning
+    if [ ${#UNKNOWN_SKILLS[@]} -gt 0 ]; then
+        section
+        echo
+        echo -e "${GOLD}⚠️  UNVERIFIED SKILLS DETECTED${NC}"
+        echo
+        echo -e "   ${GRAY}The following skills are not in the Clawdex database:${NC}"
+        for skill in "${UNKNOWN_SKILLS[@]}"; do
+            echo -e "   ${GOLD}  • $skill ⚠️${NC}"
+        done
+        echo
+        echo -e "   ${GRAY}Verify these manually at: https://clawdex.koi.security${NC}"
+        echo
+    fi
     
     # Instance info
     echo -e "${GRAY}INSTANCE ID: $INSTANCE_ID${NC}"
@@ -367,7 +480,7 @@ print_results() {
     
     # Links
     echo -e "${BLUE}🔗 Dashboard:${NC} https://friday.openclaw.dev/d/$INSTANCE_ID"
-    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAYsec"
+    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAY"
     echo
 }
 
@@ -379,10 +492,20 @@ submit_leaderboard() {
     
     speak "Connecting to Stark Industries global network..."
     
+    # Prompt for optional handle
+    echo -ne "${BLUE}Enter your @Twitter handle for the leaderboard (optional): ${NC}"
+    read -r user_handle
+    
     # Prepare submission data
+    local handle_param=""
+    if [ -n "$user_handle" ]; then
+        handle_param="\"handle\": \"$user_handle\","
+    fi
+    
     local json_data=$(cat <<EOF
 {
   "instance_id": "$INSTANCE_ID",
+  $handle_param
   "score": $score,
   "os": "$os",
   "arch": "$arch",
@@ -390,7 +513,8 @@ submit_leaderboard() {
   "network_score": $NETWORK_SCORE,
   "perm_score": $PERM_SCORE,
   "gateway_score": $GATEWAY_SCORE,
-  "channel_score": $CHANNEL_SCORE
+  "channel_score": $CHANNEL_SCORE,
+  "skill_score": $SKILL_SCORE
 }
 EOF
 )
@@ -425,7 +549,7 @@ EOF
     fi
     
     echo
-    echo -e "${BLUE}🐦${NC} Share your rank: https://twitter.com/intent/tweet?text=My%20OpenClaw%20scored%20$score%2F100%20on%20FRIDAY!%20Rank%20%23$rank%20globally%20%23FRIDAYsec"
+    echo -e "${BLUE}🐦${NC} Share your rank: https://twitter.com/intent/tweet?text=My%20OpenClaw%20scored%20$score%2F100%20on%20FRIDAY!%20Rank%20%23$rank%20globally%20%23FRIDAY"
     echo
 }
 
