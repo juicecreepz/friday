@@ -70,6 +70,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     instance_id TEXT UNIQUE NOT NULL,
+    handle TEXT,
     score INTEGER NOT NULL,
     os TEXT,
     arch TEXT,
@@ -78,23 +79,52 @@ db.exec(`
     perm_score INTEGER DEFAULT 0,
     gateway_score INTEGER DEFAULT 0,
     channel_score INTEGER DEFAULT 0,
+    skill_score INTEGER DEFAULT 0,
     ip_address TEXT,
     user_agent TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE INDEX IF NOT EXISTS idx_submissions_score ON submissions(score DESC);
   CREATE INDEX IF NOT EXISTS idx_submissions_timestamp ON submissions(timestamp);
   CREATE INDEX IF NOT EXISTS idx_submissions_instance ON submissions(instance_id);
+  CREATE INDEX IF NOT EXISTS idx_submissions_handle ON submissions(handle);
 `);
+
+// Add handle and skill_score columns if they don't exist (migration for existing DBs)
+try {
+  db.exec(`ALTER TABLE submissions ADD COLUMN handle TEXT`);
+} catch (e) { /* column exists */ }
+try {
+  db.exec(`ALTER TABLE submissions ADD COLUMN skill_score INTEGER DEFAULT 0`);
+} catch (e) { /* column exists */ }
+try {
+  db.exec(`ALTER TABLE submissions ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+} catch (e) { /* column exists */ }
 
 // Prepared statements
 const statements = {
   insertSubmission: db.prepare(`
-    INSERT OR REPLACE INTO submissions 
-    (instance_id, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, ip_address, user_agent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO submissions 
+    (instance_id, handle, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
+  updateByHandle: db.prepare(`
+    UPDATE submissions 
+    SET instance_id = ?, score = ?, os = ?, arch = ?, timestamp = ?, 
+        network_score = ?, perm_score = ?, gateway_score = ?, channel_score = ?, skill_score = ?,
+        ip_address = ?, user_agent = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE handle = ?
+  `),
+  updateByInstance: db.prepare(`
+    UPDATE submissions 
+    SET handle = ?, score = ?, os = ?, arch = ?, timestamp = ?, 
+        network_score = ?, perm_score = ?, gateway_score = ?, channel_score = ?, skill_score = ?,
+        ip_address = ?, user_agent = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE instance_id = ?
+  `),
+  getByHandle: db.prepare('SELECT * FROM submissions WHERE handle = ?'),
   getRank: db.prepare(`
     SELECT COUNT(*) + 1 as rank FROM submissions WHERE score > ?
   `),
@@ -112,6 +142,7 @@ const statements = {
   getLeaderboard: db.prepare(`
     SELECT 
       instance_id,
+      handle,
       score,
       os,
       arch,
@@ -120,6 +151,7 @@ const statements = {
       perm_score,
       gateway_score,
       channel_score,
+      skill_score,
       ROW_NUMBER() OVER (ORDER BY score DESC) as rank
     FROM submissions
     ORDER BY score DESC
@@ -281,7 +313,7 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
     });
   }
 
-  const { instance_id, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score } = req.body;
+  const { instance_id, handle, score, os, arch, timestamp, network_score, perm_score, gateway_score, channel_score, skill_score } = req.body;
 
   // Validation
   if (!instance_id || typeof score !== 'number') {
@@ -292,10 +324,13 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
     return res.status(400).json({ error: 'Score must be between 0 and 100' });
   }
 
-  // Validate instance_id format
-  if (!/^friday-[a-f0-9]+$/.test(instance_id)) {
+  // Validate instance_id format (allow friday-XXXXX)
+  if (!/^friday-[a-zA-Z0-9]+$/.test(instance_id)) {
     return res.status(400).json({ error: 'Invalid instance_id format' });
   }
+
+  // Clean handle (remove @ if present)
+  const cleanHandle = handle ? handle.replace(/^@/, '').trim() : null;
 
   try {
     // Check for recent submissions from same IP (rate limiting)
@@ -307,20 +342,74 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
       });
     }
 
-    // Insert submission
-    statements.insertSubmission.run(
-      instance_id,
-      score,
-      os || 'unknown',
-      arch || 'unknown',
-      timestamp || new Date().toISOString(),
-      network_score || 0,
-      perm_score || 0,
-      gateway_score || 0,
-      channel_score || 0,
-      req.ip,
-      req.headers['user-agent']
-    );
+    let isUpdate = false;
+
+    // Check if handle already exists - if so, update instead of insert
+    if (cleanHandle) {
+      const existingByHandle = statements.getByHandle.get(cleanHandle);
+      if (existingByHandle) {
+        // Update existing entry by handle
+        statements.updateByHandle.run(
+          instance_id,
+          score,
+          os || 'unknown',
+          arch || 'unknown',
+          timestamp || new Date().toISOString(),
+          network_score || 0,
+          perm_score || 0,
+          gateway_score || 0,
+          channel_score || 0,
+          skill_score || 0,
+          req.ip,
+          req.headers['user-agent'],
+          cleanHandle
+        );
+        isUpdate = true;
+      }
+    }
+
+    // Check if instance_id already exists
+    if (!isUpdate) {
+      const existingByInstance = statements.getByInstance.get(instance_id);
+      if (existingByInstance) {
+        // Update existing entry by instance_id
+        statements.updateByInstance.run(
+          cleanHandle,
+          score,
+          os || 'unknown',
+          arch || 'unknown',
+          timestamp || new Date().toISOString(),
+          network_score || 0,
+          perm_score || 0,
+          gateway_score || 0,
+          channel_score || 0,
+          skill_score || 0,
+          req.ip,
+          req.headers['user-agent'],
+          instance_id
+        );
+        isUpdate = true;
+      }
+    }
+
+    // New submission
+    if (!isUpdate) {
+      statements.insertSubmission.run(
+        instance_id,
+        cleanHandle,
+        score,
+        os || 'unknown',
+        arch || 'unknown',
+        timestamp || new Date().toISOString(),
+        network_score || 0,
+        perm_score || 0,
+        gateway_score || 0,
+        channel_score || 0,
+        skill_score || 0,
+        req.ip,
+        req.headers['user-agent']
+      );
+    }
 
     // Get rank
     const { rank } = statements.getRank.get(score);
@@ -329,10 +418,12 @@ app.post('/api/leaderboard/submit', leaderboardLimiter, (req, res) => {
 
     res.json({
       success: true,
+      updated: isUpdate,
       rank,
       total_participants: total,
       percentile,
-      instance_id
+      instance_id,
+      handle: cleanHandle
     });
   } catch (error) {
     console.error('Submission error:', error);

@@ -54,7 +54,7 @@ print_banner() {
 
 # FRIDAY voice lines
 speak() {
-    echo -e "${BLUE}🎙️  FRIDAY:${WHITE} \"$1\"${NC}"
+    echo -e "${BLUE}🎙️  FRIDAY:${NC} ${WHITE}$1${NC}"
     echo
 }
 
@@ -440,9 +440,38 @@ calculate_scores() {
     TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE + SKILL_SCORE))
 }
 
-# Print detailed issues breakdown
+# Offer to run a fix command
+offer_fix() {
+    local desc="$1"
+    local fix_cmd="$2"
+    local points="$3"
+    
+    echo -e "   ${RED}$points${NC}  $desc"
+    echo -e "         ${GRAY}Command:${NC} $fix_cmd"
+    echo -ne "         ${BLUE}Run this fix? [Y/n/skip all]: ${NC}"
+    read -r fix_response < /dev/tty
+    
+    case "$fix_response" in
+        [Ss]|[Ss]kip*)
+            echo -e "         ${GRAY}Skipping all remaining fixes...${NC}"
+            return 2  # Signal to skip all
+            ;;
+        [Nn]|[Nn]o)
+            echo -e "         ${GRAY}Skipped${NC}"
+            return 1
+            ;;
+        *)
+            echo -e "         ${GOLD}Running...${NC}"
+            eval "$fix_cmd" 2>/dev/null && echo -e "         ${GREEN}✓ Done${NC}" || echo -e "         ${RED}✗ Failed (may need sudo)${NC}"
+            return 0
+            ;;
+    esac
+}
+
+# Print detailed issues breakdown with interactive fixes
 print_issues() {
     local has_issues=false
+    local skip_all=false
     
     # Check if any issues exist
     if [ ${#NETWORK_ISSUES[@]} -gt 0 ] || [ ${#PERM_ISSUES[@]} -gt 0 ] || \
@@ -457,72 +486,75 @@ print_issues() {
         return
     fi
     
-    echo -e "${WHITE}🔍 DETAILED BREAKDOWN:${NC}"
+    echo -e "${WHITE}🔍 ISSUES FOUND — Fix now or skip:${NC}"
     echo
     
-    # Network issues
-    if [ ${#NETWORK_ISSUES[@]} -gt 0 ]; then
-        echo -e "   ${BLUE}Network ($NETWORK_SCORE/30):${NC}"
-        for issue in "${NETWORK_ISSUES[@]}"; do
-            local points=$(echo "$issue" | cut -d: -f2)
-            local desc=$(echo "$issue" | cut -d: -f3)
-            local fix=$(echo "$issue" | cut -d: -f4)
-            echo -e "   ${RED}$points${NC}  $desc"
-            echo -e "         ${GREEN}→ Fix:${NC} $fix"
-        done
-        echo
-    fi
+    # Process all issues with interactive prompts
+    local all_issues=()
+    local all_categories=()
     
-    # Permission issues
-    if [ ${#PERM_ISSUES[@]} -gt 0 ]; then
-        echo -e "   ${BLUE}Permissions ($PERM_SCORE/25):${NC}"
-        for issue in "${PERM_ISSUES[@]}"; do
-            local points=$(echo "$issue" | cut -d: -f2)
-            local desc=$(echo "$issue" | cut -d: -f3)
-            local fix=$(echo "$issue" | cut -d: -f4)
-            echo -e "   ${RED}$points${NC}  $desc"
-            echo -e "         ${GREEN}→ Fix:${NC} $fix"
-        done
-        echo
-    fi
+    for issue in "${NETWORK_ISSUES[@]}"; do
+        all_issues+=("$issue")
+        all_categories+=("Network")
+    done
+    for issue in "${PERM_ISSUES[@]}"; do
+        all_issues+=("$issue")
+        all_categories+=("Permissions")
+    done
+    for issue in "${GATEWAY_ISSUES[@]}"; do
+        all_issues+=("$issue")
+        all_categories+=("Gateway")
+    done
+    for issue in "${CHANNEL_ISSUES[@]}"; do
+        all_issues+=("$issue")
+        all_categories+=("Channels")
+    done
+    for issue in "${SKILL_ISSUES[@]}"; do
+        all_issues+=("$issue")
+        all_categories+=("Skills")
+    done
     
-    # Gateway issues
-    if [ ${#GATEWAY_ISSUES[@]} -gt 0 ]; then
-        echo -e "   ${BLUE}Gateway ($GATEWAY_SCORE/25):${NC}"
-        for issue in "${GATEWAY_ISSUES[@]}"; do
-            local points=$(echo "$issue" | cut -d: -f2)
-            local desc=$(echo "$issue" | cut -d: -f3)
-            local fix=$(echo "$issue" | cut -d: -f4)
+    local last_category=""
+    local i=0
+    for issue in "${all_issues[@]}"; do
+        local category="${all_categories[$i]}"
+        local points=$(echo "$issue" | cut -d: -f2)
+        local desc=$(echo "$issue" | cut -d: -f3)
+        local fix=$(echo "$issue" | cut -d: -f4)
+        
+        # Print category header if changed
+        if [ "$category" != "$last_category" ]; then
+            echo -e "   ${BLUE}━━━ $category ━━━${NC}"
+            last_category="$category"
+        fi
+        
+        if [ "$skip_all" = false ]; then
+            offer_fix "$desc" "$fix" "$points"
+            local result=$?
+            if [ $result -eq 2 ]; then
+                skip_all=true
+                echo
+            fi
+        else
+            # Just show the issue without prompting
             echo -e "   ${RED}$points${NC}  $desc"
             echo -e "         ${GREEN}→ Fix:${NC} $fix"
-        done
-        echo
-    fi
+        fi
+        
+        i=$((i + 1))
+    done
+    echo
     
-    # Channel issues
-    if [ ${#CHANNEL_ISSUES[@]} -gt 0 ]; then
-        echo -e "   ${BLUE}Channels ($CHANNEL_SCORE/20):${NC}"
-        for issue in "${CHANNEL_ISSUES[@]}"; do
-            local points=$(echo "$issue" | cut -d: -f2)
-            local desc=$(echo "$issue" | cut -d: -f3)
-            local fix=$(echo "$issue" | cut -d: -f4)
-            echo -e "   ${RED}$points${NC}  $desc"
-            echo -e "         ${GREEN}→ Fix:${NC} $fix"
-        done
-        echo
-    fi
-    
-    # Skill issues
-    if [ ${#SKILL_ISSUES[@]} -gt 0 ]; then
-        echo -e "   ${BLUE}Skills ($SKILL_SCORE/20):${NC}"
-        for issue in "${SKILL_ISSUES[@]}"; do
-            local points=$(echo "$issue" | cut -d: -f2)
-            local desc=$(echo "$issue" | cut -d: -f3)
-            local fix=$(echo "$issue" | cut -d: -f4)
-            echo -e "   ${RED}$points${NC}  $desc"
-            echo -e "         ${GREEN}→ Fix:${NC} $fix"
-        done
-        echo
+    # If any fixes were applied, offer to rescan
+    if [ "$skip_all" = false ]; then
+        echo -ne "${BLUE}Rescan to update score? [Y/n]: ${NC}"
+        read -r rescan_response < /dev/tty
+        if [[ "$rescan_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
+            speak "Re-analyzing security posture..."
+            calculate_scores
+            echo -e "   ${WHITE}Updated score: ${GOLD}$TOTAL_SCORE/100${NC}"
+            echo
+        fi
     fi
 }
 

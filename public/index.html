@@ -1023,7 +1023,7 @@
 
         <div class="leaderboard-controls">
             <div class="leaderboard-search">
-                <input type="text" class="search-input" id="searchInput" placeholder="Search instance ID..." maxlength="50">
+                <input type="text" class="search-input" id="searchInput" placeholder="Search @username or instance ID..." maxlength="50">
                 <button class="find-me-btn" onclick="findMe()">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="11" cy="11" r="8"/>
@@ -1146,7 +1146,7 @@
             let html = `
                 <div class="leaderboard-header">
                     <div>Rank</div>
-                    <div>Instance</div>
+                    <div>User</div>
                     <div style="text-align: right;">Score</div>
                 </div>
             `;
@@ -1154,12 +1154,15 @@
             pageEntries.forEach((entry) => {
                 const rank = allEntries.findIndex(e => e.instance_id === entry.instance_id) + 1;
                 const isTop3 = rank <= 3;
-                const isUser = entry.instance_id === userInstanceId;
+                const isUser = entry.instance_id === userInstanceId || (entry.handle && entry.handle === localStorage.getItem('friday_handle'));
+                
+                // Display handle with @ or fall back to instance_id
+                const displayName = entry.handle ? `@${entry.handle}` : entry.instance_id;
                 
                 html += `
                     <div class="leaderboard-row ${isUser ? 'highlighted' : ''}" data-instance="${entry.instance_id}">
                         <div class="rank ${isTop3 ? 'top' : ''}">#${rank}</div>
-                        <div class="instance">${entry.instance_id}</div>
+                        <div class="instance">${displayName}</div>
                         <div class="score-value-lg">${entry.score}</div>
                     </div>
                 `;
@@ -1236,35 +1239,45 @@
         }
 
         async function findMe() {
-            if (!userInstanceId) {
-                const input = document.getElementById('searchInput').value.trim();
-                if (input) {
-                    userInstanceId = input;
-                    localStorage.setItem('friday_instance_id', userInstanceId);
-                } else {
-                    const promptId = prompt('Enter your instance ID (found in FRIDAY output):');
-                    if (promptId) {
-                        userInstanceId = promptId;
-                        localStorage.setItem('friday_instance_id', userInstanceId);
-                        document.getElementById('searchInput').value = userInstanceId;
+            const input = document.getElementById('searchInput').value.trim();
+            let searchTerm = input || userInstanceId || localStorage.getItem('friday_handle');
+            
+            if (!searchTerm) {
+                const promptId = prompt('Enter your @username or instance ID:');
+                if (promptId) {
+                    searchTerm = promptId.replace(/^@/, '');
+                    // Store based on format
+                    if (searchTerm.startsWith('friday-')) {
+                        localStorage.setItem('friday_instance_id', searchTerm);
+                        userInstanceId = searchTerm;
                     } else {
-                        return;
+                        localStorage.setItem('friday_handle', searchTerm);
                     }
+                    document.getElementById('searchInput').value = searchTerm;
+                } else {
+                    return;
                 }
             }
 
-            const index = allEntries.findIndex(e => e.instance_id === userInstanceId);
+            // Search by handle or instance_id
+            const cleanSearch = searchTerm.replace(/^@/, '').toLowerCase();
+            const index = allEntries.findIndex(e => 
+                e.instance_id === searchTerm || 
+                e.instance_id?.toLowerCase() === cleanSearch ||
+                e.handle?.toLowerCase() === cleanSearch
+            );
             
             if (index === -1) {
-                alert('Instance not found. Run FRIDAY first to submit your score!');
+                alert('Not found. Run FRIDAY and submit your score first!');
                 return;
             }
             
+            const entry = allEntries[index];
             const targetPage = Math.floor(index / entriesPerPage) + 1;
             goToPage(targetPage);
             
             setTimeout(() => {
-                const row = document.querySelector(`[data-instance="${userInstanceId}"]`);
+                const row = document.querySelector(`[data-instance="${entry.instance_id}"]`);
                 if (row) {
                     row.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     row.style.background = 'rgba(0, 212, 170, 0.25)';
@@ -1275,9 +1288,20 @@
             }, 150);
         }
 
-        // Search input handler
+        // Search input handler - filter by handle or instance_id
         document.getElementById('searchInput')?.addEventListener('input', (e) => {
-            filterLeaderboard(e.target.value.trim());
+            const term = e.target.value.trim().toLowerCase().replace(/^@/, '');
+            if (!term) {
+                filteredEntries = [...allEntries];
+            } else {
+                filteredEntries = allEntries.filter(entry => 
+                    entry.instance_id?.toLowerCase().includes(term) ||
+                    entry.handle?.toLowerCase().includes(term)
+                );
+            }
+            currentPage = 1;
+            renderLeaderboard();
+            updatePagination();
         });
 
         // Load leaderboard on page load
