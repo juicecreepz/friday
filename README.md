@@ -1,6 +1,6 @@
 # FRIDAY
 
-🛡️ One-command security auditor for OpenClaw AI assistants. Named after Tony Stark's AI. Scores your security, detects malicious skills via Clawdex, and ranks you on a global leaderboard. 
+🛡️ One-command security auditor for OpenClaw AI assistants. Named after Tony Stark's AI assistant. Scores your armor rating, detects malicious skills via Clawdex, and ranks you on the global leaderboard. 
 
 ```bash
 curl -sSL friday.openclaw.dev | bash
@@ -11,9 +11,9 @@ curl -sSL friday.openclaw.dev | bash
 
 ---
 
-Everyone names their OpenClaw "Jarvis" - but who's protecting Jarvis? 
+Everyone names their OpenClaw "Jarvis" - but who is protecting Jarvis? 
 
-FRIDAY is a security-first audit tool that scans your AI assistant for vulnerabilities, malicious skills, and network exposure. Get your Stark Certified security score and climb the global leaderboard.
+FRIDAY is a security-first audit tool that scans your AI assistant for vulnerabilities, malicious skills, and network exposure. Get your Stark Certified armor rating and climb the global leaderboard.
 
 ## 🚀 Quick Start
 
@@ -23,12 +23,12 @@ curl -sSL friday.openclaw.dev | bash
 
 ## ✨ Features
 
-- **One-Command Audit** - No dependencies, no sign-up
-- **Malicious Skill Detection** - Checks against Clawdex database (detected 341 malicious skills in ClawHavoc attack)
-- **Security Scoring** - 5 vectors: Network, Permissions, Gateway, Channels, Skills
+- **One-Command Audit** - No dependencies, no sign-up required
+- **Malicious Skill Detection** - Checks against Clawdex database (detected 341 malicious skills in the ClawHavoc attack)
+- **Armor Rating** - 5 vectors: Network, Permissions, Gateway, Channels, Skills
 - **Auto-Fix** - Automatically hardens firewall, permissions, and gateway binding
 - **Tailscale Integration** - Optional upgrade for private mesh networking
-- **Global Leaderboard** - Compare scores worldwide (opt-in)
+- **Global Leaderboard** - Compare ratings worldwide (opt-in)
 - **Gamified** - Stark Certified badges and achievements
 
 ## 🏆 Security Scores
@@ -38,7 +38,7 @@ curl -sSL friday.openclaw.dev | bash
 | 90-100 | ★ Stark Certified ★ | Excellent |
 | 70-89 | ◆ Shield Protocol Active ◆ | Good |
 | 50-69 | ⚠ Suit Damage Detected | Needs Work |
-| <50 | 🚨 Critical | Immediate Action Required |
+| <50 | 🚨 Critical Failure | Immediate Action Required |
 
 ## 📊 What FRIDAY Checks
 
@@ -50,28 +50,17 @@ curl -sSL friday.openclaw.dev | bash
 
 ## 🛠️ Self-Hosting
 
-### Deploy Backend
-```bash
-cd friday-api
-npm install
-npm start
-```
-
-### Deploy Frontend
-Static hosting (GitHub Pages, Cloudflare Pages, etc.):
-```bash
-cd friday-frontend
-# Upload to your static host
-```
-
-### Render (One-Click)
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+Want to run your own FRIDAY instance? See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions including Render, Docker, and manual setup.
 
 ## 🙏 Credits
 
 - Built by [@juicetin](https://twitter.com/juicetin)
 - Malicious skill detection powered by [Clawdex](https://clawdex.koi.security) (Koi Security)
 - Inspired by the OpenClaw community
+
+---
+
+*"Sir, I have indeed been uploaded."* - FRIDAY
 
 ## 📜 License
 
