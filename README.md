@@ -11,8 +11,6 @@ curl -sSL friday.openclaw.dev | bash
 
 ---
 
-Security hardening tool for OpenClaw AI assistants. One command to audit vulnerabilities, detect malicious skills via Clawdex, and secure your instance.
-
 ## 🚀 Quick Start
 
 ```bash
