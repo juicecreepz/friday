@@ -176,10 +176,12 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
+// CORS - allow frontend origins
 app.use(cors({
-  origin: config.corsOrigins,
+  origin: true,  // Reflect request origin (allows all origins with credentials support)
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 app.use(compression());
