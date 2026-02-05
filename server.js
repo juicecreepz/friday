@@ -42,7 +42,7 @@ const config = {
   enableLeaderboard: process.env.ENABLE_LEADERBOARD !== 'false',
   enableAnalytics: process.env.ENABLE_ANALYTICS !== 'false',
   enablePublicStats: process.env.ENABLE_PUBLIC_STATS !== 'false',
-  corsOrigins: (process.env.CORS_ORIGINS || 'https://friday.openclaw.dev').split(',')
+  corsOrigins: (process.env.CORS_ORIGINS || 'https://friday-boi.pages.dev').split(',')
 };
 
 // Ensure data directory exists
