@@ -29,6 +29,13 @@ TOTAL_SCORE=0
 MALICIOUS_SKILLS=()
 UNKNOWN_SKILLS=()
 
+# Issue tracking for detailed breakdown
+NETWORK_ISSUES=()
+PERM_ISSUES=()
+GATEWAY_ISSUES=()
+CHANNEL_ISSUES=()
+SKILL_ISSUES=()
+
 # Instance ID
 INSTANCE_ID="friday-$(date +%s | tail -c 5)"
 
@@ -329,40 +336,194 @@ fix_gateway_binding() {
     fi
 }
 
-# Calculate scores
+# Calculate scores with issue tracking
 calculate_scores() {
+    # Reset issues
+    NETWORK_ISSUES=()
+    PERM_ISSUES=()
+    GATEWAY_ISSUES=()
+    CHANNEL_ISSUES=()
+    SKILL_ISSUES=()
+    
     # Network (30 points)
     local tailscale=$(check_tailscale)
     local firewall=$(check_firewall)
     local ssh=$(check_ssh_exposure)
     
     NETWORK_SCORE=0
-    [ "$tailscale" = "active" ] && NETWORK_SCORE=$((NETWORK_SCORE + 15))
-    [ "$tailscale" = "installed" ] && NETWORK_SCORE=$((NETWORK_SCORE + 8))
-    [ "$firewall" = "active" ] && NETWORK_SCORE=$((NETWORK_SCORE + 10))
-    [ "$ssh" = "local-only" ] && NETWORK_SCORE=$((NETWORK_SCORE + 5))
-    [ "$ssh" = "disabled" ] && NETWORK_SCORE=$((NETWORK_SCORE + 5))
+    if [ "$tailscale" = "active" ]; then
+        NETWORK_SCORE=$((NETWORK_SCORE + 15))
+    elif [ "$tailscale" = "installed" ]; then
+        NETWORK_SCORE=$((NETWORK_SCORE + 8))
+        NETWORK_ISSUES+=("tailscale_inactive:-7:Tailscale installed but not connected:Run 'sudo tailscale up' to connect")
+    else
+        NETWORK_ISSUES+=("tailscale_missing:-15:Tailscale not installed:Run 'curl -fsSL https://tailscale.com/install.sh | sh'")
+    fi
+    
+    if [ "$firewall" = "active" ]; then
+        NETWORK_SCORE=$((NETWORK_SCORE + 10))
+    else
+        NETWORK_ISSUES+=("firewall_inactive:-10:Firewall not active:Run 'sudo ufw enable' (Linux) or enable in System Preferences (macOS)")
+    fi
+    
+    if [ "$ssh" = "local-only" ] || [ "$ssh" = "disabled" ]; then
+        NETWORK_SCORE=$((NETWORK_SCORE + 5))
+    elif [ "$ssh" = "exposed" ]; then
+        NETWORK_ISSUES+=("ssh_exposed:-5:SSH exposed to internet:Add 'ListenAddress 127.0.0.1' to /etc/ssh/sshd_config or use Tailscale SSH")
+    fi
     
     # Permissions (25 points)
-    PERM_SCORE=$(check_openclaw_perms)
+    PERM_SCORE=25
+    if [ -d "$HOME/.openclaw" ]; then
+        local perms=$(stat -c "%a" "$HOME/.openclaw" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw" 2>/dev/null)
+        if [ "$perms" != "700" ]; then
+            PERM_SCORE=$((PERM_SCORE - 5))
+            PERM_ISSUES+=("dir_perms:-5:~/.openclaw has loose permissions ($perms):Run 'chmod 700 ~/.openclaw'")
+        fi
+    fi
+    
+    if [ -f "$HOME/.openclaw/config.json" ]; then
+        local config_perms=$(stat -c "%a" "$HOME/.openclaw/config.json" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw/config.json" 2>/dev/null)
+        if [ "$config_perms" != "600" ]; then
+            PERM_SCORE=$((PERM_SCORE - 5))
+            PERM_ISSUES+=("config_perms:-5:config.json has loose permissions ($config_perms):Run 'chmod 600 ~/.openclaw/config.json'")
+        fi
+    fi
     
     # Gateway (25 points)
     local gateway=$(check_gateway_binding)
     local token_issues=$(check_auth_tokens)
     
     GATEWAY_SCORE=25
-    [ "$gateway" = "localhost" ] && GATEWAY_SCORE=25
-    [ "$gateway" = "exposed" ] && GATEWAY_SCORE=10
-    [ "$gateway" = "unknown" ] && GATEWAY_SCORE=15
-    [ "$token_issues" -gt 0 ] && GATEWAY_SCORE=$((GATEWAY_SCORE - 10))
+    if [ "$gateway" = "exposed" ]; then
+        GATEWAY_SCORE=10
+        GATEWAY_ISSUES+=("gateway_exposed:-15:Gateway bound to 0.0.0.0 (public):Change bind to '127.0.0.1' in config.json")
+    elif [ "$gateway" = "unknown" ]; then
+        GATEWAY_SCORE=15
+        GATEWAY_ISSUES+=("gateway_unknown:-10:Could not verify gateway binding:Check gateway.bind in config.json is '127.0.0.1'")
+    fi
+    
+    if [ "$token_issues" -gt 0 ]; then
+        GATEWAY_SCORE=$((GATEWAY_SCORE - 10))
+        GATEWAY_ISSUES+=("weak_token:-10:Auth token is too short (<32 chars):Generate a longer token with 'openssl rand -hex 32'")
+    fi
     
     # Channels (20 points)
-    CHANNEL_SCORE=$(check_channel_policies)
+    CHANNEL_SCORE=20
+    if [ -f "$HOME/.openclaw/config.json" ]; then
+        if grep -q '"groupPolicy": *"open"' "$HOME/.openclaw/config.json" 2>/dev/null; then
+            CHANNEL_SCORE=$((CHANNEL_SCORE - 10))
+            CHANNEL_ISSUES+=("open_groups:-10:Group policy is 'open' (anyone can message):Set groupPolicy to 'allowlist' in config.json")
+        fi
+        
+        if ! grep -q '"allowlist"' "$HOME/.openclaw/config.json" 2>/dev/null; then
+            CHANNEL_SCORE=$((CHANNEL_SCORE - 5))
+            CHANNEL_ISSUES+=("no_allowlist:-5:No allowlist configured:Add allowlist array to channel config")
+        fi
+    fi
     
     # Skills (20 points) - Clawdex scan
     SKILL_SCORE=$(check_skills)
     
+    # Add skill issues from check
+    if [ ${#MALICIOUS_SKILLS[@]} -gt 0 ]; then
+        for skill in "${MALICIOUS_SKILLS[@]}"; do
+            SKILL_ISSUES+=("malicious_$skill:-50:Malicious skill detected: $skill:Run 'npm uninstall -g $skill' IMMEDIATELY")
+        done
+    fi
+    if [ ${#UNKNOWN_SKILLS[@]} -gt 0 ]; then
+        for skill in "${UNKNOWN_SKILLS[@]}"; do
+            SKILL_ISSUES+=("unknown_$skill:-5:Unverified skill: $skill:Check https://clawdex.koi.security or remove if untrusted")
+        done
+    fi
+    
     TOTAL_SCORE=$((NETWORK_SCORE + PERM_SCORE + GATEWAY_SCORE + CHANNEL_SCORE + SKILL_SCORE))
+}
+
+# Print detailed issues breakdown
+print_issues() {
+    local has_issues=false
+    
+    # Check if any issues exist
+    if [ ${#NETWORK_ISSUES[@]} -gt 0 ] || [ ${#PERM_ISSUES[@]} -gt 0 ] || \
+       [ ${#GATEWAY_ISSUES[@]} -gt 0 ] || [ ${#CHANNEL_ISSUES[@]} -gt 0 ] || \
+       [ ${#SKILL_ISSUES[@]} -gt 0 ]; then
+        has_issues=true
+    fi
+    
+    if [ "$has_issues" = false ]; then
+        echo -e "${GREEN}✓ Perfect score! No issues detected.${NC}"
+        echo
+        return
+    fi
+    
+    echo -e "${WHITE}🔍 DETAILED BREAKDOWN:${NC}"
+    echo
+    
+    # Network issues
+    if [ ${#NETWORK_ISSUES[@]} -gt 0 ]; then
+        echo -e "   ${BLUE}Network ($NETWORK_SCORE/30):${NC}"
+        for issue in "${NETWORK_ISSUES[@]}"; do
+            local points=$(echo "$issue" | cut -d: -f2)
+            local desc=$(echo "$issue" | cut -d: -f3)
+            local fix=$(echo "$issue" | cut -d: -f4)
+            echo -e "   ${RED}$points${NC}  $desc"
+            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+        done
+        echo
+    fi
+    
+    # Permission issues
+    if [ ${#PERM_ISSUES[@]} -gt 0 ]; then
+        echo -e "   ${BLUE}Permissions ($PERM_SCORE/25):${NC}"
+        for issue in "${PERM_ISSUES[@]}"; do
+            local points=$(echo "$issue" | cut -d: -f2)
+            local desc=$(echo "$issue" | cut -d: -f3)
+            local fix=$(echo "$issue" | cut -d: -f4)
+            echo -e "   ${RED}$points${NC}  $desc"
+            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+        done
+        echo
+    fi
+    
+    # Gateway issues
+    if [ ${#GATEWAY_ISSUES[@]} -gt 0 ]; then
+        echo -e "   ${BLUE}Gateway ($GATEWAY_SCORE/25):${NC}"
+        for issue in "${GATEWAY_ISSUES[@]}"; do
+            local points=$(echo "$issue" | cut -d: -f2)
+            local desc=$(echo "$issue" | cut -d: -f3)
+            local fix=$(echo "$issue" | cut -d: -f4)
+            echo -e "   ${RED}$points${NC}  $desc"
+            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+        done
+        echo
+    fi
+    
+    # Channel issues
+    if [ ${#CHANNEL_ISSUES[@]} -gt 0 ]; then
+        echo -e "   ${BLUE}Channels ($CHANNEL_SCORE/20):${NC}"
+        for issue in "${CHANNEL_ISSUES[@]}"; do
+            local points=$(echo "$issue" | cut -d: -f2)
+            local desc=$(echo "$issue" | cut -d: -f3)
+            local fix=$(echo "$issue" | cut -d: -f4)
+            echo -e "   ${RED}$points${NC}  $desc"
+            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+        done
+        echo
+    fi
+    
+    # Skill issues
+    if [ ${#SKILL_ISSUES[@]} -gt 0 ]; then
+        echo -e "   ${BLUE}Skills ($SKILL_SCORE/20):${NC}"
+        for issue in "${SKILL_ISSUES[@]}"; do
+            local points=$(echo "$issue" | cut -d: -f2)
+            local desc=$(echo "$issue" | cut -d: -f3)
+            local fix=$(echo "$issue" | cut -d: -f4)
+            echo -e "   ${RED}$points${NC}  $desc"
+            echo -e "         ${GREEN}→ Fix:${NC} $fix"
+        done
+        echo
+    fi
 }
 
 # Print progress bar
@@ -441,6 +602,9 @@ print_results() {
     printf "  %s/%s\n" "$SKILL_SCORE" "20"
     echo
     
+    # Print detailed issues with fixes
+    print_issues
+    
     # Malicious skills warning
     if [ ${#MALICIOUS_SKILLS[@]} -gt 0 ]; then
         section
@@ -494,7 +658,7 @@ submit_leaderboard() {
     
     # Prompt for optional handle
     echo -ne "${BLUE}Enter your @Twitter handle for the leaderboard (optional): ${NC}"
-    read -r user_handle
+    read -r user_handle < /dev/tty
     
     # Prepare submission data
     local handle_param=""
@@ -576,7 +740,7 @@ offer_tailscale_upgrade() {
         # Prompt for install
         speak "Boss, I can get you to full combat readiness. 30 seconds for Stark Certified armor."
         echo -ne "${BLUE}Install Tailscale now? [Y/n]: ${NC}"
-        read -r response
+        read -r response < /dev/tty
         
         if [[ "$response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             install_tailscale
@@ -611,7 +775,7 @@ offer_tailscale_upgrade() {
         echo
         speak "Boss, your security score qualifies for the global leaderboard. Shall I submit it?"
         echo -ne "${BLUE}Submit to FRIDAY leaderboard? [Y/n]: ${NC}"
-        read -r lb_response
+        read -r lb_response < /dev/tty
         
         if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             submit_leaderboard $TOTAL_SCORE
