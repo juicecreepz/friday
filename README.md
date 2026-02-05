@@ -1,6 +1,6 @@
 # FRIDAY
 
-🛡️ One-command security auditor for OpenClaw AI assistants. Named after Tony Stark's AI assistant. Scores your armor rating, detects malicious skills via Clawdex, and ranks you on the global leaderboard. 
+🛡️ Security hardening tool for OpenClaw AI assistants. One command to audit vulnerabilities, detect malicious skills via Clawdex, and secure your instance.
 
 ```bash
 curl -sSL friday.openclaw.dev | bash
@@ -11,9 +11,7 @@ curl -sSL friday.openclaw.dev | bash
 
 ---
 
-Everyone names their OpenClaw "Jarvis" - but who is protecting Jarvis? 
-
-FRIDAY is a security-first audit tool that scans your AI assistant for vulnerabilities, malicious skills, and network exposure. Get your Stark Certified armor rating and climb the global leaderboard.
+Security hardening tool for OpenClaw AI assistants. One command to audit vulnerabilities, detect malicious skills via Clawdex, and secure your instance.
 
 ## 🚀 Quick Start
 
