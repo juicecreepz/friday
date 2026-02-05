@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FRIDAY — AI Instance Security</title>
+    <meta name="description" content="One-command security hardening for OpenClaw. Get your Stark Certified security score.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --bg-elevated: #141414;
+            --bg-card: #1a1a1a;
+            --border: #2a2a2a;
+            --text: #ffffff;
+            --text-secondary: #888888;
+            --accent: #00d4aa;
+            --accent-glow: rgba(0, 212, 170, 0.15);
+            --gold: #f59e0b;
+            --red: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Gradient background effect */
+        .gradient-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 212, 170, 0.08), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 80%, rgba(245, 158, 11, 0.05), transparent);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+            background: linear-gradient(to bottom, rgba(10,10,10,0.9) 0%, rgba(10,10,10,0) 100%);
+            backdrop-filter: blur(10px);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), #00b894);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+        }
+
+        /* Hero */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 8rem 2rem 4rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        h1 span {
+            background: linear-gradient(135deg, var(--accent), #00f5c4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            margin-bottom: 3rem;
+            max-width: 600px;
+        }
+
+        /* Install Box */
+        .install-container {
+            width: 100%;
+            max-width: 700px;
+            margin-bottom: 3rem;
+        }
+
+        .install-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        .install-box::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 16px;
+            padding: 1px;
+            background: linear-gradient(135deg, rgba(0,212,170,0.3), transparent 50%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+
+        .install-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+        }
+
+        .install-command {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            background: var(--bg);
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.95rem;
+            border: 1px solid var(--border);
+        }
+
+        .install-command code {
+            color: var(--accent);
+            flex: 1;
+            overflow-x: auto;
+        }
+
+        .copy-btn {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .copy-btn:hover {
+            border-color: var(--accent);
+            background: rgba(0, 212, 170, 0.1);
+        }
+
+        .copy-btn.copied {
+            background: var(--accent);
+            color: var(--bg);
+            border-color: var(--accent);
+        }
+
+        .install-meta {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .install-meta a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: color 0.2s;
+        }
+
+        .install-meta a:hover {
+            color: var(--accent);
+        }
+
+        /* Buttons */
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 0.875rem 1.75rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--text-secondary);
+        }
+
+        /* Features Section */
+        .section {
+            padding: 6rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-header h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.125rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: all 0.3s;
+        }
+
+        .feature:hover {
+            border-color: rgba(0, 212, 170, 0.3);
+            transform: translateY(-4px);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(0, 212, 170, 0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .feature h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* Scores Section */
+        .scores {
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .scores-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1rem;
+            margin-top: 3rem;
+        }
+
+        .score-item {
+            text-align: center;
+            padding: 1.5rem 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .score-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 0.25rem;
+        }
+
+        .score-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        /* Badges */
+        .badges-container {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 3rem;
+            flex-wrap: wrap;
+        }
+
+        .badge-card {
+            background: var(--bg-elevated);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem 2.5rem;
+            text-align: center;
+            min-width: 200px;
+        }
+
+        .badge-card.stark {
+            border-color: var(--gold);
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), var(--bg-elevated));
+        }
+
+        .badge-card.shield {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), var(--bg-elevated));
+        }
+
+        .badge-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .badge-name {
+            font-weight: 700;
+            font-size: 1.1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .badge-card.stark .badge-name {
+            color: var(--gold);
+        }
+
+        .badge-card.shield .badge-name {
+            color: var(--accent);
+        }
+
+        .badge-range {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Leaderboard */
+        .leaderboard-table {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-top: 2rem;
+        }
+
+        .leaderboard-header {
+            display: grid;
+            grid-template-columns: 80px 1fr 100px;
+            padding: 1rem 1.5rem;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .leaderboard-row {
+            display: grid;
+            grid-template-columns: 80px 1fr 100px;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+        }
+
+        .leaderboard-row:last-child {
+            border-bottom: none;
+        }
+
+        .rank {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .rank.top {
+            color: var(--gold);
+        }
+
+        .instance {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .score-value-lg {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            color: var(--accent);
+            text-align: right;
+            font-size: 1.1rem;
+        }
+
+        /* CTA Section */
+        .cta-section {
+            text-align: center;
+            padding: 6rem 2rem;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), rgba(245, 158, 11, 0.05));
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 4rem 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .cta-box h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .cta-box p {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid var(--border);
+        }
+
+        .footer-quote {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            font-size: 0.95rem;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--text);
+        }
+
+        .footer-copy {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+
+            .scores-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .badges-container {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .leaderboard-header,
+            .leaderboard-row {
+                grid-template-columns: 50px 1fr 70px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="gradient-bg"></div>
+
+    <nav>
+        <a href="#" class="logo">
+            <div class="logo-icon">🛡️</div>
+            FRIDAY
+        </a>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#security">Security</a>
+            <a href="#leaderboard">Leaderboard</a>
+            <a href="https://github.com/juicecreepz/friday" target="_blank">GitHub</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="badge">
+            <div class="badge-dot"></div>
+            One-Command Security Hardening
+        </div>
+
+        <h1>
+            Jarvis is your AI.
+            <br>
+            <span>FRIDAY keeps it safe.</span>
+        </h1>
+
+        <p class="hero-subtitle">
+            AI Instance Security for OpenClaw. Audit vulnerabilities, detect malicious skills, and secure your instance in seconds.
+        </p>
+
+        <div class="install-container">
+            <div class="install-box">
+                <div class="install-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 17l6-6-6-6"/>
+                        <path d="M12 19h8"/>
+                    </svg>
+                    Install via curl
+                </div>
+                <div class="install-command">
+                    <code>curl -sSL friday.openclaw.dev | bash</code>
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                </div>
+                <div class="install-meta">
+                    <a href="https://github.com/juicecreepz/friday/blob/main/friday.sh" target="_blank">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+                        </svg>
+                        View source
+                    </a>
+                    <a href="friday.sh.sha256">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        SHA256 checksum
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="hero-buttons">
+            <a href="#features" class="btn btn-primary">Explore Features</a>
+            <a href="https://github.com/juicecreepz/friday" class="btn btn-secondary">View on GitHub</a>
+        </div>
+    </section>
+
+    <section class="section" id="features">
+        <div class="section-header">
+            <h2>What FRIDAY Checks</h2>
+            <p>Comprehensive security audit across 5 critical vectors. Get your armor rating.</p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature">
+                <div class="feature-icon">🌐</div>
+                <h3>Network Security</h3>
+                <p>Tailscale status, firewall config, SSH exposure. Ensures your instance stays private.</p>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">📁</div>
+                <h3>Permission Audit</h3>
+                <p>Verifies ~/.openclaw permissions and config file security. Auto-fixes issues.</p>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">🔌</div>
+                <h3>Gateway Binding</h3>
+                <p>Confirms Gateway is bound to localhost (127.0.0.1), never exposed to the internet.</p>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">💬</div>
+                <h3>Channel Policies</h3>
+                <p>Reviews group policies and allowlists. Warns about open group settings.</p>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">🛡️</div>
+                <h3>Skill Verification</h3>
+                <p>Queries Clawdex to detect malicious or unknown skills installed on your system.</p>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <h3>Auto-Fix</h3>
+                <p>Automatically hardens firewall, fixes permissions, and secures gateway in one prompt.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section scores" id="security">
+        <div class="section-header">
+            <h2>Armor Rating System</h2>
+            <p>Maximum score: 120 points. How secure is your OpenClaw instance?</p>
+        </div>
+
+        <div class="scores-grid">
+            <div class="score-item">
+                <div class="score-value">30</div>
+                <div class="score-label">Network</div>
+            </div>
+            <div class="score-item">
+                <div class="score-value">25</div>
+                <div class="score-label">Permissions</div>
+            </div>
+            <div class="score-item">
+                <div class="score-value">25</div>
+                <div class="score-label">Gateway</div>
+            </div>
+            <div class="score-item">
+                <div class="score-value">20</div>
+                <div class="score-label">Channels</div>
+            </div>
+            <div class="score-item">
+                <div class="score-value">20</div>
+                <div class="score-label">Skills</div>
+            </div>
+        </div>
+
+        <div class="badges-container">
+            <div class="badge-card stark">
+                <div class="badge-icon">★</div>
+                <div class="badge-name">Stark Certified</div>
+                <div class="badge-range">90-100 points</div>
+            </div>
+            <div class="badge-card shield">
+                <div class="badge-icon">◆</div>
+                <div class="badge-name">Shield Protocol</div>
+                <div class="badge-range">70-89 points</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="leaderboard">
+        <div class="section-header">
+            <h2>Global Leaderboard</h2>
+            <p>See how your security rating compares worldwide. Join the top agents.</p>
+        </div>
+
+        <div class="leaderboard-table">
+            <div class="leaderboard-header">
+                <div>Rank</div>
+                <div>Instance</div>
+                <div style="text-align: right;">Score</div>
+            </div>
+            <div class="leaderboard-row">
+                <div class="rank top">#1</div>
+                <div class="instance">friday-arc-reactor</div>
+                <div class="score-value-lg">100</div>
+            </div>
+            <div class="leaderboard-row">
+                <div class="rank top">#2</div>
+                <div class="instance">friday-jarvis-lab</div>
+                <div class="score-value-lg">98</div>
+            </div>
+            <div class="leaderboard-row">
+                <div class="rank top">#3</div>
+                <div class="instance">friday-stark-tower</div>
+                <div class="score-value-lg">97</div>
+            </div>
+            <div class="leaderboard-row">
+                <div class="rank">#4</div>
+                <div class="instance">friday-shield-hq</div>
+                <div class="score-value-lg">94</div>
+            </div>
+            <div class="leaderboard-row">
+                <div class="rank">#5</div>
+                <div class="instance">friday-avengers</div>
+                <div class="score-value-lg">92</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta-section">
+        <div class="cta-box">
+            <h2>Ready to secure your AI?</h2>
+            <p>One command. Instant security audit. Stark Certified protection.</p>
+            <a href="#" class="btn btn-primary" onclick="window.scrollTo({top: 0, behavior: 'smooth'}); return false;">
+                Get Started
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        <p class="footer-quote">"Sir, I have indeed been uploaded."</p>
+        <div class="footer-links">
+            <a href="https://github.com/juicecreepz/friday" target="_blank">GitHub</a>
+            <a href="https://twitter.com/juicetin" target="_blank">Twitter</a>
+            <a href="https://openclaw.dev" target="_blank">OpenClaw</a>
+        </div>
+        <p class="footer-copy">Built by @juicetin • Powered by Clawdex</p>
+    </footer>
+
+    <script>
+        function copyCommand(btn) {
+            navigator.clipboard.writeText('curl -sSL friday.openclaw.dev | bash').then(() => {
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
