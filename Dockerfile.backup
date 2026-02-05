@@ -1,0 +1,20 @@
+FROM alpine:latest
+
+# Install required packages
+RUN apk add --no-cache \
+    sqlite \
+    aws-cli \
+    gzip \
+    curl \
+    dcron \
+    bash
+
+# Create backup directories
+RUN mkdir -p /backups /scripts /data
+
+# Copy backup script
+COPY scripts/backup.sh /scripts/
+RUN chmod +x /scripts/backup.sh
+
+# Run cron in foreground
+CMD ["crond", "-f", "-l", "2"]

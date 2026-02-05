@@ -1,0 +1,167 @@
+# Caddyfile for FRIDAY Self-Hosted Deployment
+# https://caddyserver.com/docs/caddyfile
+
+# Global options
+{
+    # Email for Let's Encrypt
+    email admin@openclaw.dev
+    
+    # Enable debug logging (disable in production)
+    # debug
+    
+    # Auto HTTPS
+    auto_https off
+}
+
+# Main FRIDAY domain - serves the script
+friday.openclaw.dev {
+    # Root directory for static files
+    root * /var/www/friday
+    
+    # Serve files
+    file_server {
+        # Enable browsing for debugging (disable in production)
+        # browse
+    }
+    
+    # Default to friday.sh
+    try_files {path} /friday.sh
+    
+    # Security headers
+    header {
+        # Prevent MIME type sniffing
+        X-Content-Type-Options nosniff
+        
+        # Prevent clickjacking
+        X-Frame-Options DENY
+        
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        
+        # Referrer policy
+        Referrer-Policy strict-origin-when-cross-origin
+        
+        # Remove server header
+        -Server
+    }
+    
+    # CORS for script access
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        respond "" 204
+    }
+    
+    # Add CORS headers to script responses
+    header /friday.sh {
+        Access-Control-Allow-Origin "*"
+        Cache-Control "no-cache, no-store, must-revalidate"
+        Pragma no-cache
+        Expires 0
+    }
+    
+    # Content type for bash scripts
+    @script path *.sh
+    header @script Content-Type text/plain;\ charset=utf-8
+    
+    # Log configuration
+    log {
+        output file /var/log/caddy/friday-access.log {
+            roll_size 10MB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+    
+    # Compression
+    encode gzip zstd
+}
+
+# API subdomain - proxies to Node.js service
+api.friday.openclaw.dev {
+    # Reverse proxy to API server
+    reverse_proxy localhost:3000 {
+        # Health checks
+        health_uri /api/health
+        health_interval 30s
+        health_timeout 5s
+        
+        # Headers
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+    
+    # CORS configuration
+    header {
+        Access-Control-Allow-Origin "https://friday.openclaw.dev"
+        Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type, Authorization"
+        Access-Control-Max-Age 86400
+    }
+    
+    # Rate limiting (requires caddy-rate-limit module)
+    # rate_limit {
+    #     zone static_api {
+    #         key {remote_host}
+    #         events 100
+    #         window 15m
+    #     }
+    # }
+    
+    # API-specific logging
+    log {
+        output file /var/log/caddy/friday-api.log {
+            roll_size 10MB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+    
+    # Compression
+    encode gzip zstd
+}
+
+# Redirect www to non-www
+www.friday.openclaw.dev {
+    redir https://friday.openclaw.dev{uri} permanent
+}
+
+# Internal metrics endpoint (protected)
+metrics.friday.openclaw.dev {
+    # Basic auth for metrics
+    basicauth {
+        # Generate with: caddy hash-password
+        admin $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
+    }
+    
+    # Prometheus metrics
+    metrics
+    
+    # Restrict to internal access
+    @internal {
+        remote_ip 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    }
+    handle @internal {
+        respond "Access denied" 403
+    }
+}
+
+# Default response for unmatched hosts
+:80 {
+    respond "FRIDAY API Server" 200
+}

@@ -1,0 +1,72 @@
+# Render.com Blueprint for FRIDAY - FREE TIER
+# Backend API only - Frontend on Cloudflare Pages
+# https://dashboard.render.com/select-repo?type=blueprint
+
+services:
+  # API service only (SQLite persists across restarts)
+  - type: web
+    name: friday-api
+    runtime: node
+    branch: main
+    buildCommand: npm ci
+    startCommand: node server.js
+    plan: free
+    # SQLite stored in Render disk (persists across restarts)
+    disk:
+      name: friday-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    domains:
+      - api.friday.openclaw.dev
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+      - key: DATABASE_URL
+        value: sqlite:/opt/render/project/src/data/leaderboard.db
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000  # 15 minutes
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: LEADERBOARD_RATE_LIMIT
+        value: 10
+      - key: ENABLE_LEADERBOARD
+        value: true
+      - key: ENABLE_ANALYTICS
+        value: true
+      - key: ENABLE_PUBLIC_STATS
+        value: true
+      - key: CORS_ORIGINS
+        value: https://friday.openclaw.dev,https://*.pages.dev
+    healthCheckPath: /api/health
+
+  # Backup job - exports SQLite to external storage
+  - type: job
+    name: friday-backup
+    runtime: node
+    branch: main
+    buildCommand: npm ci
+    startCommand: node scripts/backup-render.js
+    plan: free
+    schedule: "0 */6 * * *"  # Every 6 hours
+    envVars:
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+      - key: DATABASE_URL
+        value: sqlite:/opt/render/project/src/data/leaderboard.db
+      - key: BACKUP_RETENTION_DAYS
+        value: 7
+    # Optional: Add external storage env vars in dashboard
+    # - S3_BUCKET_NAME
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+
+# Note: No database service - using SQLite file on disk
+# Note: No static site - using Cloudflare Pages for friday.sh

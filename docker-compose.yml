@@ -1,0 +1,135 @@
+# Docker Compose for FRIDAY Self-Hosted Deployment
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # Caddy reverse proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: friday-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - ./public:/var/www/friday:ro
+      - ./logs:/var/log/caddy
+    environment:
+      - CADDY_ADMIN=0.0.0.0:2019
+    networks:
+      - friday-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/friday.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Node.js API server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: friday-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=sqlite:/app/data/leaderboard.db
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - API_KEY=${API_KEY}
+      - RATE_LIMIT_WINDOW_MS=900000
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - ENABLE_LEADERBOARD=true
+      - ENABLE_ANALYTICS=true
+    env_file:
+      - .env
+    networks:
+      - friday-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backup service (runs as cron)
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    container_name: friday-backup
+    restart: "no"
+    volumes:
+      - ./data:/data:ro
+      - ./backups:/backups
+      - ./scripts:/scripts:ro
+    environment:
+      - BACKUP_DIR=/backups
+      - BACKUP_RETENTION_DAYS=30
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    env_file:
+      - .env
+    command: >
+      sh -c "echo '0 2 * * * /scripts/backup.sh' | crontab - && crond -f"
+    depends_on:
+      - api
+    networks:
+      - friday-network
+
+  # Optional: Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: friday-prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - friday-network
+
+  # Optional: Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: friday-grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - friday-network
+
+networks:
+  friday-network:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:

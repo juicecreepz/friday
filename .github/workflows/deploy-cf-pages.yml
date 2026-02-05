@@ -1,0 +1,84 @@
+# GitHub Actions Workflow for Cloudflare Pages
+# Deploys friday.sh to Cloudflare Pages (fast, always-on CDN)
+
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - '.github/workflows/deploy-cf-pages.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Prepare build directory
+        run: |
+          mkdir -p build
+          cp public/friday.sh build/
+          # Create index.html for root path
+          cat > build/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta charset="UTF-8">
+              <meta http-equiv="refresh" content="0; url=./friday.sh">
+              <title>FRIDAY - AI Security Scanner</title>
+          </head>
+          <body>
+              <pre>FRIDAY AI Security Scanner
+          
+curl -sSL friday.openclaw.dev | bash
+
+Redirecting to script...</pre>
+          </body>
+          </html>
+          EOF
+          # Create _headers for Cloudflare Pages
+          cat > build/_headers << 'EOF'
+          /friday.sh
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: no-cache, no-store, must-revalidate
+            X-Content-Type-Options: nosniff
+          
+          /*
+            X-Frame-Options: DENY
+            X-XSS-Protection: 1; mode=block
+            Referrer-Policy: strict-origin-when-cross-origin
+          EOF
+          # Create _redirects
+          cat > build/_redirects << 'EOF'
+          / /friday.sh 302
+          EOF
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: friday
+          directory: build
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Purge Cloudflare Cache
+        if: success()
+        run: |
+          curl -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}'
