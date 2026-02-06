@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # FRIDAY v1.0 - AI Instance Security
-# curl -sSL friday.openclaw.dev | bash
+# curl -sSL friday-boi.pages.dev/friday.sh | bash
 #
 # One-command security hardening for OpenClaw
 
@@ -664,7 +664,7 @@ print_results() {
     echo
     
     # Links
-    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday.openclaw.dev/dashboard.html?i=$INSTANCE_ID"
+    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday-boi.pages.dev/dashboard.html?i=$INSTANCE_ID"
     echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAYsec"
     echo
 }
@@ -708,7 +708,7 @@ EOF
     local response=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -d "$json_data" \
-        "https://friday.openclaw.dev/api/leaderboard/submit" 2>/dev/null || echo '{"error": "connection_failed"}')
+        "https://friday-boi.pages.dev/api/leaderboard/submit" 2>/dev/null || echo '{"error": "connection_failed"}')
     
     # Parse response
     local rank=$(echo "$response" | grep -o '"rank":[0-9]*' | cut -d':' -f2 || echo "--")

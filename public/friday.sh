@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # FRIDAY v1.0 - AI Instance Security
-# curl -sSL friday-boi.pages.dev | bash
+# curl -sSL friday-boi.pages.dev/friday.sh | bash
 #
 # One-command security hardening for OpenClaw
 
@@ -909,7 +909,7 @@ print_results() {
     echo
     
     # Links
-    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday.openclaw.dev/leaderboard.html"
+    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday-boi.pages.dev"
     echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F120%20%23FRIDAY"
     echo
 }
@@ -953,7 +953,7 @@ submit_leaderboard() {
         "$INSTANCE_ID" "$user_handle" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
     
     local response
-    if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
+    if ! http_post_json "https://friday-boi.pages.dev/api/leaderboard/submit" "$json_data"; then
         echo -e "${RED}Failed to submit (network error).${NC}"
         if [ -n "${HTTP_ERR:-}" ]; then
             echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -995,7 +995,7 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
+        if ! http_post_json "https://friday-boi.pages.dev/api/leaderboard/submit" "$json_data"; then
             echo -e "${RED}Failed to submit (network error).${NC}"
             if [ -n "${HTTP_ERR:-}" ]; then
                 echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -1040,7 +1040,7 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
+        if ! http_post_json "https://friday-boi.pages.dev/api/leaderboard/submit" "$json_data"; then
             echo -e "${RED}Failed to submit (network error).${NC}"
             if [ -n "${HTTP_ERR:-}" ]; then
                 echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -1094,7 +1094,7 @@ submit_leaderboard() {
     fi
     
     echo
-    echo -e "${BLUE}🔗 Leaderboard:${NC} https://friday-boi.pages.dev/#leaderboard"
+    echo -e "${BLUE}🔗 Leaderboard:${NC} https://friday-boi.pages.dev"
     echo -e "${BLUE}🐦 Share:${NC} https://twitter.com/intent/tweet?text=I%20scored%20$score%2F120%20on%20FRIDAY%20security!%20Rank%20%23$rank%20%40$user_handle%20%23FRIDAY"
     echo
 }
