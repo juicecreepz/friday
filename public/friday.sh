@@ -119,9 +119,13 @@ safe_read() {
     local prompt="$2"
     
     # Always try /dev/tty first for true interactivity
-    if [ -w /dev/tty ]; then
-        if [ -n "$prompt" ]; then
+    # NOTE: in many `curl | bash` scenarios, stdin is not a TTY, but /dev/tty is readable.
+    if [ -r /dev/tty ]; then
+        if [ -n "$prompt" ] && [ -w /dev/tty ]; then
             printf "%s" "$prompt" > /dev/tty
+        elif [ -n "$prompt" ]; then
+            # Fallback: print prompt to stdout
+            printf "%s" "$prompt"
         fi
         IFS= read -r "$var_name" < /dev/tty
         return 0
@@ -137,10 +141,11 @@ safe_read() {
     fi
     
     # Last resort: use stdin with timeout (for piped input)
+    # Keep timeout short so we don't hang, but do not silently treat 'y' as 'no'.
     if [ -n "$prompt" ]; then
         printf "%s" "$prompt"
     fi
-    IFS= read -r -t 5 "$var_name" || eval "$var_name=''"
+    IFS= read -r -t 15 "$var_name" || eval "$var_name=''"
 }
 
 # sudo preflight (run once when the first sudo fix is chosen)
@@ -244,10 +249,46 @@ check_tailscale() {
 }
 
 check_firewall() {
+    local os_name
+    os_name=$(uname -s)
+
+    # macOS firewall (Application Firewall / ALF)
+    if [ "$os_name" = "Darwin" ]; then
+        local sfw_out
+        sfw_out=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+        if echo "$sfw_out" | grep -q "enabled"; then
+            echo "active"
+            return
+        fi
+
+        local alf_state
+        alf_state=$(defaults read /Library/Preferences/com.apple.alf globalstate 2>/dev/null || echo "")
+        if [ "$alf_state" = "1" ] || [ "$alf_state" = "2" ]; then
+            echo "active"
+        else
+            echo "inactive"
+        fi
+        return
+    fi
+
+    # Linux firewall (ufw/iptables)
     if command -v ufw &> /dev/null; then
-        ufw status | grep -q "Status: active" && echo "active" || echo "inactive"
+        local ufw_out
+        ufw_out=$(ufw status 2>&1 || true)
+
+        if echo "$ufw_out" | grep -q "Status: active"; then
+            echo "active"
+            return
+        fi
+
+        if echo "$ufw_out" | grep -qi "need to be root\|must be root\|permission denied"; then
+            ufw_out=$(sudo -n ufw status 2>&1 || sudo ufw status 2>&1 || true)
+            echo "$ufw_out" | grep -q "Status: active" && echo "active" || echo "inactive"
+        else
+            echo "inactive"
+        fi
     elif command -v iptables &> /dev/null; then
-        iptables -L -n | grep -q "DROP" && echo "active" || echo "inactive"
+        iptables -L -n 2>/dev/null | grep -q "DROP" && echo "active" || echo "inactive"
     else
         echo "missing"
     fi
@@ -868,7 +909,7 @@ print_results() {
     echo
     
     # Links
-    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday-boi.pages.dev/#leaderboard"
+    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday.openclaw.dev/leaderboard.html"
     echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F120%20%23FRIDAY"
     echo
 }
@@ -912,7 +953,7 @@ submit_leaderboard() {
         "$INSTANCE_ID" "$user_handle" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
     
     local response
-    if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+    if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
         echo -e "${RED}Failed to submit (network error).${NC}"
         if [ -n "${HTTP_ERR:-}" ]; then
             echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -954,7 +995,7 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+        if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
             echo -e "${RED}Failed to submit (network error).${NC}"
             if [ -n "${HTTP_ERR:-}" ]; then
                 echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -999,7 +1040,7 @@ submit_leaderboard() {
         json_data=$(printf '{"instance_id":"%s","handle":"%s","pin":"%s","score":%d,"os":"%s","arch":"%s","timestamp":"%s","network_score":%d,"perm_score":%d,"gateway_score":%d,"channel_score":%d,"skill_score":%d}' \
             "$INSTANCE_ID" "$user_handle" "$user_pin" "$score" "$os" "$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NETWORK_SCORE" "$PERM_SCORE" "$GATEWAY_SCORE" "$CHANNEL_SCORE" "$SKILL_SCORE")
         
-        if ! http_post_json "https://friday-qqf9.onrender.com/api/leaderboard/submit" "$json_data"; then
+        if ! http_post_json "https://friday.openclaw.dev/api/leaderboard/submit" "$json_data"; then
             echo -e "${RED}Failed to submit (network error).${NC}"
             if [ -n "${HTTP_ERR:-}" ]; then
                 echo -e "${GRAY}${HTTP_ERR}${NC}"
@@ -1115,7 +1156,10 @@ offer_tailscale_upgrade() {
     speak "Boss, want to submit your score to the global leaderboard?"
     local lb_response=""
     safe_read lb_response "${BLUE}Submit to leaderboard? [Y/n]: ${NC}"
-    
+
+    # Normalize input (handles spaces / CR from some terminals)
+    lb_response=$(echo "$lb_response" | tr -d '[:space:]')
+
     if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
         submit_leaderboard $TOTAL_SCORE
     else

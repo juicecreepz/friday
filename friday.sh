@@ -1,11 +1,51 @@
 #!/bin/bash
 #
 # FRIDAY v1.0 - AI Instance Security
-# curl -sSL friday-boi.pages.dev | bash
+# curl -sSL friday.openclaw.dev | bash
 #
 # One-command security hardening for OpenClaw
 
 set -e
+
+# Detect OS
+detect_os() {
+    local os=$(uname -s)
+    case "$os" in
+        Linux*)
+            echo "linux"
+            ;;
+        Darwin*)
+            echo "macos"
+            ;;
+        *)
+            echo "unsupported"
+            ;;
+    esac
+}
+
+OS=$(detect_os)
+
+# Platform compatibility check
+if [ "$OS" = "unsupported" ]; then
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                    ⚠️  PLATFORM NOT SUPPORTED                   ║"
+    echo "╠════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                ║"
+    echo "║  FRIDAY currently supports:                                    ║"
+    echo "║    • macOS                                                     ║"
+    echo "║    • Linux (Ubuntu, Debian, CentOS, RHEL, etc.)               ║"
+    echo "║                                                                ║"
+    echo "║  Your system: $(uname -s)                                     "
+    echo "║                                                                ║"
+    echo "║  Windows users:                                                ║"
+    echo "║    • Use WSL2 (Windows Subsystem for Linux)                   ║"
+    echo "║    • Or run in a Linux VM                                     ║"
+    echo "║                                                                ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    exit 1
+fi
 
 # Colors
 BLACK='\033[0;30m'
@@ -71,6 +111,109 @@ section() {
     echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
+# Platform-aware stat function
+get_file_perms() {
+    local file="$1"
+    if [ "$OS" = "macos" ]; then
+        stat -f "%Lp" "$file" 2>/dev/null || echo ""
+    else
+        stat -c "%a" "$file" 2>/dev/null || echo ""
+    fi
+}
+
+# Platform-aware service check
+check_service_active() {
+    local service="$1"
+    if [ "$OS" = "macos" ]; then
+        # macOS uses launchctl
+        if launchctl list 2>/dev/null | grep -q "$service"; then
+            echo "active"
+        else
+            echo "inactive"
+        fi
+    else
+        # Linux uses systemctl
+        if systemctl is-active "$service" &> /dev/null; then
+            echo "active"
+        else
+            echo "inactive"
+        fi
+    fi
+}
+
+# Check if SSH is running
+check_ssh_running() {
+    if [ "$OS" = "macos" ]; then
+        # macOS - check if sshd is in launchctl or listening on port 22
+        if pgrep -x "sshd" > /dev/null 2>&1 || netstat -an 2>/dev/null | grep -q "\.22 " || lsof -i :22 2>/dev/null | grep -q "sshd"; then
+            echo "yes"
+        else
+            echo "no"
+        fi
+    else
+        # Linux
+        if systemctl is-active sshd &> /dev/null || systemctl is-active ssh &> /dev/null || pgrep -x "sshd" > /dev/null 2>&1; then
+            echo "yes"
+        else
+            echo "no"
+        fi
+    fi
+}
+
+# Platform-aware firewall check
+check_firewall() {
+    if [ "$OS" = "macos" ]; then
+        # Check macOS firewall via socketfilterfw and ALF globalstate.
+        # globalstate values:
+        #   0 = off
+        #   1 = on (specific services)
+        #   2 = on (essential services)
+        local sfw_out
+        sfw_out=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+
+        if echo "$sfw_out" | grep -q "enabled"; then
+            echo "active"
+            return
+        fi
+
+        local alf_state
+        alf_state=$(defaults read /Library/Preferences/com.apple.alf globalstate 2>/dev/null || echo "")
+        if [ "$alf_state" = "1" ] || [ "$alf_state" = "2" ]; then
+            echo "active"
+        else
+            echo "inactive"
+        fi
+    else
+        # Linux - check ufw or iptables
+        if command -v ufw &> /dev/null; then
+            local ufw_out
+            ufw_out=$(ufw status 2>&1 || true)
+
+            if echo "$ufw_out" | grep -q "Status: active"; then
+                echo "active"
+                return
+            fi
+
+            # Some systems require root to read ufw status
+            if echo "$ufw_out" | grep -qi "need to be root\|must be root\|permission denied"; then
+                # Try non-interactive sudo first, then interactive if needed
+                ufw_out=$(sudo -n ufw status 2>&1 || sudo ufw status 2>&1 || true)
+                if echo "$ufw_out" | grep -q "Status: active"; then
+                    echo "active"
+                else
+                    echo "inactive"
+                fi
+            else
+                echo "inactive"
+            fi
+        elif command -v iptables &> /dev/null; then
+            iptables -L -n 2>/dev/null | grep -q "DROP" && echo "active" || echo "inactive"
+        else
+            echo "missing"
+        fi
+    fi
+}
+
 # Install Tailscale
 install_tailscale() {
     speak "Initiating armor upgrade sequence..."
@@ -88,9 +231,9 @@ install_tailscale() {
     echo
     echo -e "${GREEN}✓${NC} Tailscale mesh active"
     
-    # Reconfigure firewall for Tailscale-only
-    if command -v ufw &> /dev/null; then
-        sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null
+    # Reconfigure firewall for Tailscale-only (Linux only)
+    if [ "$OS" = "linux" ] && command -v ufw &> /dev/null; then
+        sudo ufw allow 41641/udp comment 'Tailscale' &> /dev/null || true
     fi
 }
 
@@ -107,28 +250,37 @@ check_tailscale() {
     fi
 }
 
-check_firewall() {
-    if command -v ufw &> /dev/null; then
-        ufw status | grep -q "Status: active" && echo "active" || echo "inactive"
-    elif command -v iptables &> /dev/null; then
-        iptables -L -n | grep -q "DROP" && echo "active" || echo "inactive"
-    else
-        echo "missing"
-    fi
-}
-
 check_ssh_exposure() {
-    if systemctl is-active sshd &> /dev/null || systemctl is-active ssh &> /dev/null; then
+    local ssh_running=$(check_ssh_running)
+    
+    if [ "$ssh_running" = "yes" ]; then
         # Check if SSH is exposed to internet
-        if ss -tlnp | grep -q ":22 "; then
-            # Check if bound to specific interface
-            if grep -q "ListenAddress 127.0.0.1" /etc/ssh/sshd_config 2>/dev/null; then
+        if [ "$OS" = "macos" ]; then
+            # On macOS, check if sshd_config restricts to localhost
+            if [ -f "/etc/ssh/sshd_config" ] && grep -q "ListenAddress 127.0.0.1" /etc/ssh/sshd_config 2>/dev/null; then
+                echo "local-only"
+            elif [ -f "/private/etc/ssh/sshd_config" ] && grep -q "ListenAddress 127.0.0.1" /private/etc/ssh/sshd_config 2>/dev/null; then
                 echo "local-only"
             else
-                echo "exposed"
+                # Check if port 22 is listening on all interfaces
+                if netstat -an 2>/dev/null | grep "*.22 " | grep -q "LISTEN"; then
+                    echo "exposed"
+                else
+                    echo "local-only"
+                fi
             fi
         else
-            echo "disabled"
+            # Linux
+            if ss -tlnp 2>/dev/null | grep -q ":22 "; then
+                # Check if bound to specific interface
+                if grep -q "ListenAddress 127.0.0.1" /etc/ssh/sshd_config 2>/dev/null; then
+                    echo "local-only"
+                else
+                    echo "exposed"
+                fi
+            else
+                echo "disabled"
+            fi
         fi
     else
         echo "disabled"
@@ -140,16 +292,16 @@ check_openclaw_perms() {
     
     # Check ~/.openclaw permissions
     if [ -d "$HOME/.openclaw" ]; then
-        local perms=$(stat -c "%a" "$HOME/.openclaw" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw" 2>/dev/null)
-        if [ "$perms" != "700" ]; then
+        local perms=$(get_file_perms "$HOME/.openclaw")
+        if [ -n "$perms" ] && [ "$perms" != "700" ]; then
             score=$((score - 5))
         fi
     fi
     
     # Check config file permissions
     if [ -f "$HOME/.openclaw/config.json" ]; then
-        local config_perms=$(stat -c "%a" "$HOME/.openclaw/config.json" 2>/dev/null || stat -f "%Lp" "$HOME/.openclaw/config.json" 2>/dev/null)
-        if [ "$config_perms" != "600" ]; then
+        local config_perms=$(get_file_perms "$HOME/.openclaw/config.json")
+        if [ -n "$config_perms" ] && [ "$config_perms" != "600" ]; then
             score=$((score - 5))
         fi
     fi
@@ -224,7 +376,6 @@ check_skills() {
     
     # Count total skills
     local total_skills=0
-    local checked_skills=0
     
     for skill_dir in "$skills_dir"/*; do
         [ -d "$skill_dir" ] || continue
@@ -236,12 +387,13 @@ check_skills() {
         return
     fi
     
+    echo -e "   ${BLUE}[🔄]${NC} Checking $total_skills skills against Clawdex database..."
+    
     # Check each skill against Clawdex
     for skill_dir in "$skills_dir"/*; do
         [ -d "$skill_dir" ] || continue
         
         local skill_name=$(basename "$skill_dir")
-        checked_skills=$((checked_skills + 1))
         
         # Query Clawdex API
         local verdict=$(curl -s --max-time 5 "https://clawdex.koi.security/api/skill/$skill_name" 2>/dev/null | grep -o '"verdict":"[^"]*"' | cut -d'"' -f4)
@@ -250,18 +402,22 @@ check_skills() {
             "malicious")
                 MALICIOUS_SKILLS+=("$skill_name")
                 score=$((score - 50))  # Heavy penalty
+                echo -e "      ${RED}✗ $skill_name - MALICIOUS${NC}"
                 ;;
             "unknown")
                 UNKNOWN_SKILLS+=("$skill_name")
                 score=$((score - 10))
+                echo -e "      ${GOLD}? $skill_name - unknown${NC}"
                 ;;
             "benign")
                 # Safe, no penalty
+                echo -e "      ${GREEN}✓ $skill_name${NC}"
                 ;;
             *)
                 # API failed or skill not in database, treat as unknown
                 UNKNOWN_SKILLS+=("$skill_name")
                 score=$((score - 5))
+                echo -e "      ${GRAY}? $skill_name - unverified${NC}"
                 ;;
         esac
     done
@@ -271,31 +427,42 @@ check_skills() {
         score=0
     fi
     
+    echo
     echo $score
 }
 
 # Auto-fix functions
 fix_firewall() {
-    speak "Locking down perimeter defenses..."
-    
-    if command -v ufw &> /dev/null; then
-        # Reset and configure UFW
-        sudo ufw --force reset &> /dev/null
-        sudo ufw default deny incoming &> /dev/null
-        sudo ufw default allow outgoing &> /dev/null
+    if [ "$OS" = "macos" ]; then
+        speak "Configuring macOS firewall..."
         
-        # Allow Tailscale only
-        sudo ufw allow 41641/udp &> /dev/null  # Tailscale
+        # Enable macOS firewall
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on 2>/dev/null || \
+            defaults write /Library/Preferences/com.apple.alf globalstate -int 1 2>/dev/null || \
+            echo -e "${GOLD}[!]${NC} Could not enable firewall - configure manually in System Preferences"
         
-        # Block SSH if exposed
-        local ssh_status=$(check_ssh_exposure)
-        if [ "$ssh_status" = "exposed" ]; then
-            # Don't allow SSH through firewall
-            echo -e "${GOLD}[!] SSH exposure detected - recommend Tailscale SSH${NC}"
+        echo -e "${GREEN}✓${NC} Firewall configured (macOS)"
+    else
+        speak "Locking down perimeter defenses..."
+        
+        if command -v ufw &> /dev/null; then
+            # Reset and configure UFW
+            sudo ufw --force reset &> /dev/null || true
+            sudo ufw default deny incoming &> /dev/null || true
+            sudo ufw default allow outgoing &> /dev/null || true
+            
+            # Allow Tailscale only
+            sudo ufw allow 41641/udp &> /dev/null || true  # Tailscale
+            
+            # Block SSH if exposed
+            local ssh_status=$(check_ssh_exposure)
+            if [ "$ssh_status" = "exposed" ]; then
+                echo -e "${GOLD}[!] SSH exposure detected - recommend Tailscale SSH${NC}"
+            fi
+            
+            sudo ufw --force enable &> /dev/null || true
+            echo -e "${GREEN}✓${NC} Firewall configured (Linux UFW)"
         fi
-        
-        sudo ufw --force enable &> /dev/null
-        echo -e "${GREEN}✓${NC} Firewall configured"
     fi
 }
 
@@ -306,8 +473,8 @@ fix_permissions() {
         chmod 700 "$HOME/.openclaw"
         
         # Secure all config files
-        find "$HOME/.openclaw" -name "*.json" -exec chmod 600 {} \; 2>/dev/null
-        find "$HOME/.openclaw" -name "*.key" -exec chmod 600 {} \; 2>/dev/null
+        find "$HOME/.openclaw" -name "*.json" -exec chmod 600 {} \; 2>/dev/null || true
+        find "$HOME/.openclaw" -name "*.key" -exec chmod 600 {} \; 2>/dev/null || true
         
         echo -e "${GREEN}✓${NC} Permissions locked"
     fi
@@ -322,8 +489,14 @@ fix_gateway_binding() {
         
         # Update bind address to localhost if exposed
         if grep -q '"bind": *"0.0.0.0"' "$HOME/.openclaw/config.json" 2>/dev/null; then
-            sed -i 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null || \
-            sed -i '' 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null
+            if [ "$OS" = "macos" ]; then
+                # macOS sed requires different syntax for -i
+                sed -i '' 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null || \
+                    echo -e "${GOLD}[!]${NC} Could not update gateway binding - please edit manually"
+            else
+                sed -i 's/"bind": *"0.0.0.0"/"bind": "127.0.0.1"/' "$HOME/.openclaw/config.json" 2>/dev/null || \
+                    echo -e "${GOLD}[!]${NC} Could not update gateway binding - please edit manually"
+            fi
             echo -e "${GREEN}✓${NC} Gateway bound to localhost"
         fi
     fi
@@ -453,7 +626,7 @@ print_results() {
         done
         echo
         echo -e "   ${GOLD}Immediate action required:${NC}"
-        echo -e "   ${WHITE}  npm uninstall -g <skill-name>${NC}"
+        echo -e "   ${WHITE}  openclaw skill uninstall $skill${NC}"
         echo
         speak "Boss, I've detected compromised armor components. Immediate removal required."
         echo
@@ -474,13 +647,25 @@ print_results() {
         echo
     fi
     
+    # Platform-specific notes
+    if [ "$OS" = "macos" ]; then
+        section
+        echo
+        echo -e "${GOLD}ℹ️  macOS-Specific Notes:${NC}"
+        echo
+        echo -e "   ${GRAY}• Configure firewall in: System Preferences → Security & Privacy${NC}"
+        echo -e "   ${GRAY}• SSH can be disabled in: System Preferences → Sharing${NC}"
+        echo -e "   ${GRAY}• FileVault encryption recommended for full disk security${NC}"
+        echo
+    fi
+    
     # Instance info
     echo -e "${GRAY}INSTANCE ID: $INSTANCE_ID${NC}"
     echo
     
     # Links
-    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday-boi.pages.dev/#leaderboard"
-    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAY"
+    echo -e "${BLUE}🔗 Dashboard:${NC} https://friday.openclaw.dev/dashboard.html?i=$INSTANCE_ID"
+    echo -e "${BLUE}🐦 Share:${NC}     https://twitter.com/intent/tweet?text=Just%20secured%20my%20OpenClaw%20with%20FRIDAY%21%20Score%3A%20$TOTAL_SCORE%2F100%20%23FRIDAYsec"
     echo
 }
 
@@ -499,7 +684,7 @@ submit_leaderboard() {
     # Prepare submission data
     local handle_param=""
     if [ -n "$user_handle" ]; then
-        handle_param="\"handle\": \"$user_handle\","
+        handle_param='"handle": "'"$user_handle"'",'
     fi
     
     local json_data=$(cat <<EOF
@@ -519,16 +704,30 @@ submit_leaderboard() {
 EOF
 )
     
-    # Submit to API (placeholder - replace with actual endpoint)
+    # Submit to API
     local response=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -d "$json_data" \
-        "https://friday-qqf9.onrender.com/api/leaderboard/submit" 2>/dev/null || echo '{"error": "connection_failed"}')
+        "https://friday.openclaw.dev/api/leaderboard/submit" 2>/dev/null || echo '{"error": "connection_failed"}')
     
-    # Parse response (simple grep/sed for now)
+    # Parse response
     local rank=$(echo "$response" | grep -o '"rank":[0-9]*' | cut -d':' -f2 || echo "--")
     local total=$(echo "$response" | grep -o '"total_participants":[0-9]*' | cut -d':' -f2 || echo "--")
     local percentile=$(echo "$response" | grep -o '"percentile":[0-9]*' | cut -d':' -f2 || echo "--")
+    
+    # Check if we got an error
+    if echo "$response" | grep -q "error"; then
+        echo
+        section
+        echo
+        echo -e "${GOLD}⚠️  LEADERBOARD TEMPORARILY UNAVAILABLE${NC}"
+        echo
+        echo -e "   ${GRAY}Could not connect to leaderboard service.${NC}"
+        echo -e "   ${GRAY}Your score: ${WHITE}$score/100${NC}"
+        echo -e "   ${GRAY}Try again later or check your internet connection.${NC}"
+        echo
+        return
+    fi
     
     echo
     section
@@ -540,16 +739,16 @@ EOF
     echo
     
     # Achievement badges for leaderboard
-    if [ "$rank" -le 10 ] 2>/dev/null; then
+    if [ "$rank" != "--" ] && [ "$rank" -le 10 ] 2>/dev/null; then
         echo -e "   ${GOLD}★ TOP 10 FRIDAY PROTECTOR ★${NC}"
-    elif [ "$rank" -le 100 ] 2>/dev/null; then
+    elif [ "$rank" != "--" ] && [ "$rank" -le 100 ] 2>/dev/null; then
         echo -e "   ${BLUE}◆ ELITE SECURITY OPERATIVE ◆${NC}"
-    elif [ "$percentile" -le 10 ] 2>/dev/null; then
+    elif [ "$percentile" != "--" ] && [ "$percentile" -le 10 ] 2>/dev/null; then
         echo -e "   ${GREEN}⚔ SHIELD AGENT ⚔${NC}"
     fi
     
     echo
-    echo -e "${BLUE}🐦${NC} Share your rank: https://twitter.com/intent/tweet?text=My%20OpenClaw%20scored%20$score%2F100%20on%20FRIDAY!%20Rank%20%23$rank%20globally%20%23FRIDAY"
+    echo -e "${BLUE}🐦${NC} Share your rank: https://twitter.com/intent/tweet?text=My%20OpenClaw%20scored%20$score%2F100%20on%20FRIDAY!%20Rank%20%23$rank%20globally%20%23FRIDAYsec"
     echo
 }
 
@@ -611,8 +810,16 @@ offer_tailscale_upgrade() {
         echo
         speak "Boss, your security score qualifies for the global leaderboard. Shall I submit it?"
         echo -ne "${BLUE}Submit to FRIDAY leaderboard? [Y/n]: ${NC}"
-        read -r lb_response
-        
+
+        # When running via `curl | bash`, stdin may not be interactive.
+        # Read from /dev/tty when available, and normalize whitespace.
+        if [ -r /dev/tty ]; then
+            read -r lb_response < /dev/tty
+        else
+            read -r lb_response
+        fi
+        lb_response=$(echo "$lb_response" | tr -d '[:space:]')
+
         if [[ "$lb_response" =~ ^([Yy]|[Yy]es|)$ ]]; then
             submit_leaderboard $TOTAL_SCORE
         else
@@ -622,23 +829,29 @@ offer_tailscale_upgrade() {
     fi
     
     speak "Your AI is secure, boss. I'll keep watch."
-    echo -e "${GRAY}Next scan: 24 hours | Run 'friday scan' anytime to recheck.${NC}"
+    echo -e "${GRAY}Next scan: 24 hours | Run friday again anytime to recheck.${NC}"
     echo
 }
 
 # Main execution
 main() {
     print_banner
-    speak "Initializing security protocols..."
-    section
-    echo
     
-    # Detection phase
+    # Show platform info
     echo -e "${BLUE}[🔄]${NC} Detecting environment..."
     local os=$(uname -s)
     local arch=$(uname -m)
     sleep 0.5
     echo -e "   ${GREEN}✓${NC} $os / $arch"
+    if [ "$OS" = "macos" ]; then
+        echo -e "   ${GREEN}✓${NC} macOS detected - running macOS-compatible checks"
+    else
+        echo -e "   ${GREEN}✓${NC} Linux detected - running full hardening suite"
+    fi
+    echo
+    
+    speak "Initializing security protocols..."
+    section
     echo
     
     # Checks
